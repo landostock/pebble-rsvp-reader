@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pebble-rsvp.local/schemas/progress.schema.json",
+  "title": "Pebble RSVP Progress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "book_id",
+    "book_revision",
+    "chapter_id",
+    "paragraph_id",
+    "sentence_id",
+    "token_index",
+    "timestamp",
+    "session_id"
+  ],
+  "properties": {
+    "book_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "book_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "chapter_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "paragraph_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sentence_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "token_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "percentage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  }
+}

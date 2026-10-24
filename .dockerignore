@@ -1,0 +1,14 @@
+.DS_Store
+.git
+.gitignore
+android
+backups
+docs
+fixtures
+node_modules
+server/.data
+watch
+**/build
+**/.gradle
+*.apk
+*.pbw

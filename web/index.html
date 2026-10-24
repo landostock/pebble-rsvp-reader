@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#146c5c" />
+    <title>Pebble RSVP</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail" aria-label="Main navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">R</span>
+          <div>
+            <strong>Pebble RSVP</strong>
+            <span data-i18n="brandSubtitle">Pebble library</span>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item active" type="button" data-view="library" data-i18n="navLibrary">Library</button>
+          <button class="nav-item" type="button" data-view="settings" data-i18n="navSettings">Settings</button>
+          <button class="nav-item" type="button" data-view="diagnostics" data-i18n="navDiagnostics">Diagnostics</button>
+        </nav>
+
+        <div class="rail-controls">
+          <button type="button" id="auth-button" data-i18n="signIn">Sign in</button>
+          <p class="auth-caption" id="auth-caption"></p>
+        </div>
+
+        <div class="rail-status">
+          <span class="status-dot" id="api-dot"></span>
+          <span id="api-status">Checking API</span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="topbar" aria-label="Workspace controls">
+          <div>
+            <h1 id="view-title">Library</h1>
+            <p id="view-subtitle">Watch-ready reader packages.</p>
+          </div>
+          <div class="topbar-controls" id="topbar-controls">
+            <div class="search-shell">
+              <input id="search" type="search" placeholder="Search title or author" autocomplete="off" data-i18n-placeholder="searchPlaceholder" />
+              <div class="search-results hidden" id="search-results"></div>
+            </div>
+            <label class="add-book-action" aria-label="Upload EPUB" title="Upload EPUB">
+              <span aria-hidden="true">+</span>
+              <input id="file-input" type="file" accept=".epub,application/epub+zip" multiple />
+            </label>
+            <div class="toolbar" id="library-toolbar">
+              <select id="sort">
+                <option value="last_read" data-i18n="sortLastRead">Recently read</option>
+                <option value="title" data-i18n="sortTitle">Title A-Z</option>
+                <option value="author" data-i18n="sortAuthor">Author A-Z</option>
+                <option value="recent" data-i18n="sortRecent">Recently added</option>
+                <option value="progress" data-i18n="sortProgress">Progress</option>
+              </select>
+              <div class="segmented" aria-label="Library view">
+                <button class="active" type="button" data-library-mode="grid" data-i18n="modeGrid">Grid</button>
+                <button type="button" data-library-mode="list" data-i18n="modeList">List</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view active" id="library-view">
+          <div class="upload-list hidden" id="upload-list"></div>
+          <div class="library-layout" id="library-layout">
+            <div class="library-column">
+              <div class="library-grid" id="library"></div>
+              <div class="empty-state hidden" id="library-empty">
+                <strong id="library-empty-title" data-i18n="emptyTitle">No books yet</strong>
+                <span id="library-empty-body" data-i18n="emptyBody">Upload an EPUB to create the first reader package.</span>
+              </div>
+            </div>
+
+            <aside class="detail-pane hidden" id="detail-pane" aria-label="Book details">
+              <div class="detail-empty" id="detail-empty" data-i18n="noBookSelected">No book selected.</div>
+              <form class="detail-form hidden" id="detail-form">
+                <div class="detail-titlebar">
+                  <strong id="detail-heading">Book details</strong>
+                  <span id="detail-subheading"></span>
+                </div>
+                <div class="detail-header">
+                  <div class="cover-large" id="detail-cover"></div>
+                  <div class="detail-actions">
+                    <button type="button" id="extract-cover" data-i18n="extractCover">Use EPUB cover</button>
+                    <label class="cover-action">
+                      <span data-i18n="uploadCover">Upload cover</span>
+                      <input id="cover-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+                    </label>
+                    <button type="button" id="download-package" data-i18n="downloadPackage">Download reader package</button>
+                    <button class="danger-action" type="button" id="delete-book" data-i18n="deleteBook">Delete book</button>
+                  </div>
+                </div>
+                <label>
+                  <span data-i18n="fieldTitle">Title</span>
+                  <input id="detail-title" name="title" autocomplete="off" />
+                </label>
+                <label>
+                  <span data-i18n="fieldAuthors">Authors</span>
+                  <input id="detail-authors" name="authors" autocomplete="off" />
+                </label>
+                <dl class="metrics compact">
+                  <div class="metric-language"><dt data-i18n="fieldLanguage">Language</dt><dd><input id="detail-language" name="language" autocomplete="off" /></dd></div>
+                  <div><dt data-i18n="tokens">Tokens</dt><dd id="detail-tokens">-</dd></div>
+                  <div><dt data-i18n="revision">Revision</dt><dd id="detail-revision">-</dd></div>
+                  <div><dt data-i18n="metadataRevision">Metadata</dt><dd id="detail-metadata-revision">-</dd></div>
+                </dl>
+                <div class="reading-progress">
+                  <div class="reading-progress-heading">
+                    <h2 data-i18n="readingProgress">Reading progress</h2>
+                    <button class="quiet-danger-action" type="button" id="reset-progress" data-i18n="resetProgress">Mark as unread</button>
+                  </div>
+                  <div class="progress-summary" id="progress-summary"></div>
+                  <div class="detail-progress" aria-hidden="true"><span id="detail-progress-bar"></span></div>
+                </div>
+                <button class="primary-action" type="submit" data-i18n="saveMetadata">Save metadata</button>
+              </form>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="settings-view">
+          <div class="split-layout">
+            <div class="panel settings-panel">
+              <h2 data-i18n="generalSettings">General</h2>
+              <label class="setting-control">
+                <span><strong data-i18n="languageLabel">Language</strong><small data-i18n="languageSummary">Used by the web app and synchronized watch interface.</small></span>
+                <select id="language">
+                  <option value="en">English</option>
+                  <option value="de">Deutsch</option>
+                </select>
+              </label>
+              <label class="setting-control">
+                <span><strong data-i18n="defaultSort">Default library order</strong><small data-i18n="defaultSortSummary">The watch receives the same order.</small></span>
+                <select id="default-sort">
+                  <option value="last_read" data-i18n="sortLastRead">Recently read</option>
+                  <option value="title" data-i18n="sortTitle">Title A-Z</option>
+                  <option value="author" data-i18n="sortAuthor">Author A-Z</option>
+                  <option value="recent" data-i18n="sortRecent">Recently added</option>
+                  <option value="progress" data-i18n="sortProgress">Progress</option>
+                </select>
+              </label>
+              <p class="settings-status" id="settings-status"></p>
+            </div>
+            <div class="panel">
+              <h2 data-i18n="accessMode">Access</h2>
+              <p class="muted" id="auth-summary"></p>
+            </div>
+            <div class="panel companion-panel">
+              <h2 data-i18n="androidCompanion">Android Companion</h2>
+              <p class="muted" data-i18n="deviceTokenSummary">Give each phone its own revocable access. The administrator password never leaves the browser.</p>
+              <div class="device-token-list" id="device-token-list"></div>
+              <button class="primary-action" type="button" id="generate-device-token" data-i18n="generateToken">Generate device token</button>
+            </div>
+            <div class="panel">
+              <h2 data-i18n="storageGuard">Storage Guard</h2>
+              <dl class="metrics">
+                <div><dt data-i18n="storedBytes">Approximate stored bytes</dt><dd id="stored-bytes">-</dd></div>
+                <div><dt data-i18n="sourceLimit">Default source limit</dt><dd>2 GB</dd></div>
+                <div><dt data-i18n="warningThreshold">Warning threshold</dt><dd>1.5 GB</dd></div>
+              </dl>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="diagnostics-view">
+          <div class="panel wide">
+            <h2 data-i18n="backendDiagnostics">Backend Diagnostics</h2>
+            <pre id="diagnostics-json">Loading...</pre>
+          </div>
+        </section>
+      </main>
+
+    </div>
+
+    <dialog id="login-dialog">
+      <form method="dialog" id="login-form" class="login-form">
+        <h2 data-i18n="signIn">Sign in</h2>
+        <p class="login-note hidden" id="login-note" data-i18n="devAuthNotice">Local development mode is active, so the server is not requiring a password.</p>
+        <label>
+          <span data-i18n="passwordLabel">Administrator password</span>
+          <input id="password" type="password" autocomplete="current-password" />
+        </label>
+        <p class="error" id="login-error"></p>
+        <button class="primary-action" type="submit" data-i18n="signIn">Sign in</button>
+      </form>
+    </dialog>
+
+    <dialog id="device-token-dialog">
+      <form id="device-token-form" class="login-form">
+        <h2 data-i18n="pairDevice">Pair Android phone</h2>
+        <p class="muted" data-i18n="pairDeviceSummary">Name this phone so its access can be revoked later.</p>
+        <label>
+          <span data-i18n="deviceName">Device name</span>
+          <input id="device-name" type="text" maxlength="80" autocomplete="off" required data-i18n-placeholder="deviceNamePlaceholder" placeholder="Pixel 10" />
+        </label>
+        <p class="error" id="device-token-error"></p>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-device-token" data-i18n="cancel">Cancel</button>
+          <button class="primary-action" type="submit" data-i18n="generateToken">Generate device token</button>
+        </div>
+      </form>
+      <div class="token-result hidden" id="device-token-result">
+        <h2 data-i18n="pairingReady">Pairing data ready</h2>
+        <p class="muted" data-i18n="tokenShownOnce">This secret is shown once. Copy it into the Android companion now.</p>
+        <textarea id="device-token-output" readonly rows="7" aria-label="Pairing data"></textarea>
+        <div class="dialog-actions">
+          <button type="button" id="copy-device-token" data-i18n="copyPairingData">Copy pairing data</button>
+          <button class="primary-action" type="button" id="close-device-token" data-i18n="done">Done</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="toast hidden" id="toast" role="status"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+<resources>
+    <string name="app_name">Pebble RSVP</string>
+    <string name="companion_title">Pebble RSVP Begleitapp</string>
+    <string name="connection_title">Verbindung</string>
+    <string name="not_paired">Nicht gekoppelt</string>
+    <string name="paired_with">Gekoppelt mit %1$s</string>
+    <string name="pairing_hint">Kopplungsdaten aus der Web-App einfügen</string>
+    <string name="save_pairing">Kopplung speichern</string>
+    <string name="remove_pairing">Kopplung entfernen</string>
+    <string name="sync_title">Bibliotheks-Cache</string>
+    <string name="sync_now">Jetzt synchronisieren</string>
+    <string name="clear_cache">Cache leeren</string>
+    <string name="library_title">Gecachte Bücher</string>
+    <string name="no_cached_books">Noch keine Bücher im Cache</string>
+    <string name="package_missing">Das Reader-Paket fehlt im Cache. Bitte zuerst synchronisieren.</string>
+    <string name="book_sent">„%1$s“ übertragen: %2$d Wörter in %3$d Paketen</string>
+    <string name="watch_title">Pebble</string>
+    <string name="choose_pebble_app">Pebble-App auswählen</string>
+    <string name="no_pebble_app">Keine kompatible Pebble-App installiert</string>
+    <string name="pebble_app_selected">%1$s ausgewählt</string>
+    <string name="open_watch">Watch-App öffnen</string>
+    <string name="send_smoke_test">Testpaket senden</string>
+    <string name="diagnostics_title">Diagnose</string>
+    <string name="ready">Bereit</string>
+    <string name="pairing_saved">Kopplung gespeichert</string>
+    <string name="pairing_removed">Kopplung entfernt</string>
+    <string name="cache_cleared">Cache geleert</string>
+    <string name="syncing">Bibliothek wird synchronisiert…</string>
+    <string name="sync_unchanged">Bibliothek ist bereits aktuell</string>
+    <string name="sync_complete">%1$d Bücher, %2$d Pakete und %3$d Cover synchronisiert</string>
+    <string name="pair_before_sync">Kopple dieses Telefon vor der Synchronisierung</string>
+</resources>

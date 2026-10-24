@@ -1,0 +1,32 @@
+<resources>
+    <string name="app_name">Pebble RSVP</string>
+    <string name="companion_title">Pebble RSVP Companion</string>
+    <string name="connection_title">Connection</string>
+    <string name="not_paired">Not paired</string>
+    <string name="paired_with">Paired with %1$s</string>
+    <string name="pairing_hint">Paste pairing data from the web app</string>
+    <string name="save_pairing">Save pairing</string>
+    <string name="remove_pairing">Remove pairing</string>
+    <string name="sync_title">Library cache</string>
+    <string name="sync_now">Sync now</string>
+    <string name="clear_cache">Clear cache</string>
+    <string name="library_title">Cached books</string>
+    <string name="no_cached_books">No cached books yet</string>
+    <string name="package_missing">Reader package is not cached. Synchronize the library first.</string>
+    <string name="book_sent">Sent “%1$s”: %2$d words in %3$d packets</string>
+    <string name="watch_title">Pebble</string>
+    <string name="choose_pebble_app">Choose Pebble app</string>
+    <string name="no_pebble_app">No compatible Pebble app is installed</string>
+    <string name="pebble_app_selected">Selected %1$s</string>
+    <string name="open_watch">Open watch app</string>
+    <string name="send_smoke_test">Send packet smoke test</string>
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="ready">Ready</string>
+    <string name="pairing_saved">Pairing saved</string>
+    <string name="pairing_removed">Pairing removed</string>
+    <string name="cache_cleared">Cache cleared</string>
+    <string name="syncing">Synchronizing library…</string>
+    <string name="sync_unchanged">Library already current</string>
+    <string name="sync_complete">Synchronized %1$d books, %2$d packages and %3$d covers</string>
+    <string name="pair_before_sync">Pair this phone before synchronizing</string>
+</resources>

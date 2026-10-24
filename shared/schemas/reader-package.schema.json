@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pebble-rsvp.local/schemas/reader-package.schema.json",
+  "title": "Pebble RSVP Reader Package v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "reader_package_version",
+    "metadata",
+    "chapters",
+    "paragraphs",
+    "sentences",
+    "tokens"
+  ],
+  "properties": {
+    "reader_package_version": {
+      "const": 1
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "book_id",
+        "revision",
+        "title",
+        "authors",
+        "language"
+      ],
+      "properties": {
+        "book_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "language": {
+          "type": "string"
+        }
+      }
+    },
+    "chapters": {
+      "type": "array"
+    },
+    "paragraphs": {
+      "type": "array"
+    },
+    "sentences": {
+      "type": "array"
+    },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "token_index",
+          "display",
+          "chapter_id",
+          "paragraph_id",
+          "sentence_id",
+          "focus_char_index",
+          "duration_ms_at_300wpm",
+          "paragraph_end"
+        ],
+        "properties": {
+          "token_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "display": {
+            "type": "string"
+          },
+          "chapter_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "paragraph_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sentence_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "focus_char_index": {
+            "type": "integer",
+            "minimum": -1
+          },
+          "duration_ms_at_300wpm": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "paragraph_end": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

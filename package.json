@@ -1,0 +1,20 @@
+{
+  "name": "pebble-rsvp",
+  "version": "0.3.6",
+  "private": true,
+  "type": "module",
+  "description": "Pebble RSVP monorepo: shared reader/protocol logic plus watch, Android, web, and server packages.",
+  "scripts": {
+    "test": "node --test shared/test/*.test.js server/test/*.test.js",
+    "start:server": "npm --workspace server start",
+    "hash-password": "npm --workspace server run hash-password"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

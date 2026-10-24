@@ -1,0 +1,47 @@
+{
+  "name": "pebble-rsvp-watch",
+  "author": "Pebble RSVP contributors",
+  "version": "0.3.6",
+  "private": true,
+  "keywords": [
+    "pebble-app"
+  ],
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Pebble RSVP",
+    "uuid": "7a9e1ebb-e4ad-40cd-85c6-dc9191fc9f69",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": {
+      "Packet": 1
+    },
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MATERIAL_VISIBILITY",
+          "file": "images/material_visibility_20.png"
+        }
+      ]
+    },
+    "companionApp": {
+      "android": {
+        "url": "https://github.com/pebble-dev/PebbleKitAndroid2",
+        "apps": [
+          {
+            "package": "dev.pebblersvp.android"
+          },
+          {
+            "package": "dev.pebblersvp.android.debug"
+          }
+        ]
+      }
+    }
+  }
+}

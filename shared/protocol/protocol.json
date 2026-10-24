@@ -1,0 +1,136 @@
+{
+  "protocol_version": 1,
+  "reader_package_version": 1,
+  "packet": {
+    "magic": "PRSP",
+    "header_length": 46,
+    "default_app_message_payload_bytes": 160,
+    "byte_order": "big-endian",
+    "fields": [
+      ["magic", 0, 4, "ascii"],
+      ["protocol_version", 4, 1, "uint8"],
+      ["message_type", 5, 1, "uint8"],
+      ["flags", 6, 1, "uint8"],
+      ["header_length", 7, 1, "uint8"],
+      ["request_id", 8, 4, "uint32"],
+      ["book_revision", 12, 4, "uint32"],
+      ["chunk_id", 16, 4, "uint32"],
+      ["sequence_number", 20, 2, "uint16"],
+      ["sequence_count", 22, 2, "uint16"],
+      ["payload_length", 24, 2, "uint16"],
+      ["checksum_crc32", 26, 4, "uint32"],
+      ["book_id_uuid", 30, 16, "bytes"],
+      ["payload", 46, "payload_length", "bytes"]
+    ]
+  },
+  "message_types": {
+    "1": "data",
+    "2": "ack",
+    "3": "nack",
+    "4": "request",
+    "5": "progress",
+    "6": "settings"
+  },
+  "reader_window": {
+    "magic": "RWND",
+    "version": 2,
+    "max_words": 64,
+    "max_word_utf8_bytes": 64,
+    "max_title_utf8_bytes": 32,
+    "header_bytes": 49,
+    "record_header_bytes": 4,
+    "fields": [
+      ["magic", 0, 4, "ascii"],
+      ["version", 4, 1, "uint8"],
+      ["reserved", 5, 1, "uint8"],
+      ["word_count", 6, 2, "uint16"],
+      ["start_word_index", 8, 4, "uint32"],
+      ["total_word_count", 12, 4, "uint32"],
+      ["title_length", 16, 1, "uint8"],
+      ["title", 17, 32, "utf8_padded"],
+      ["records", 49, "variable", "repeated"]
+    ],
+    "record_fields": [
+      ["display_length", 0, 1, "uint8"],
+      ["flags", 1, 1, "uint8"],
+      ["duration_ms_at_300wpm", 2, 2, "uint16"],
+      ["display", 4, "display_length", "utf8"]
+    ],
+    "record_flag_bits": {
+      "paragraph_end": 1,
+      "chapter_start": 2,
+      "sentence_start": 4,
+      "focus_index_present": 128
+    }
+  },
+  "library_payload": {
+    "magic": "LIBR",
+    "version": 6,
+    "max_books": 12,
+    "header_bytes": 12,
+    "entry_bytes": 1068,
+    "header_fields": [
+      ["magic", 0, 4, "ascii"],
+      ["version", 4, 1, "uint8"],
+      ["book_count", 5, 1, "uint8"],
+      ["language", 6, 1, "uint8"],
+      ["library_sort", 7, 1, "uint8"],
+      ["total_book_count", 8, 4, "uint32"]
+    ],
+    "cover": {
+      "width": 36,
+      "height": 52,
+      "format": "adaptive_pebble_16_color_palette_two_pixels_per_byte",
+      "palette_bytes": 16,
+      "row_bytes": 18,
+      "bytes": 936
+    },
+    "entry_fields": [
+      ["book_id_uuid", 0, 16, "bytes"],
+      ["book_revision", 16, 4, "uint32"],
+      ["title_length", 20, 1, "uint8"],
+      ["title", 21, 48, "utf8_padded"],
+      ["author_length", 69, 1, "uint8"],
+      ["author", 70, 24, "utf8_padded"],
+      ["resume_token_index", 94, 4, "uint32"],
+      ["furthest_token_index", 98, 4, "uint32"],
+      ["total_token_count", 102, 4, "uint32"],
+      ["progress_percentage", 106, 1, "uint8"],
+      ["progress_updated_at_epoch", 107, 4, "uint32"],
+      ["created_at_epoch", 111, 4, "uint32"],
+      ["has_cover", 115, 1, "uint8"],
+      ["cover_palette", 116, 16, "pebble_argb8"],
+      ["cover", 132, 936, "adaptive_pebble_16_color_palette_two_pixels_per_byte"]
+    ]
+  },
+  "settings_payload": {
+    "version": 1,
+    "bytes": 3,
+    "fields": [
+      ["version", 0, 1, "uint8"],
+      ["language", 1, 1, "uint8"],
+      ["library_sort", 2, 1, "uint8"]
+    ]
+  },
+  "progress_payload": {
+    "bytes": 12,
+    "fields": [
+      ["absolute_token_index", 0, 4, "uint32"],
+      ["total_token_count", 4, 4, "uint32"],
+      ["furthest_confirmed_token_index", 8, 4, "uint32"]
+    ]
+  },
+  "chapter_payload": {
+    "magic": "CHAP",
+    "version": 1,
+    "max_chapters": 64,
+    "max_title_utf8_bytes": 24,
+    "header_bytes": 8,
+    "entry_bytes": 29,
+    "entry_fields": [
+      ["start_token_index", 0, 4, "uint32"],
+      ["title_length", 4, 1, "uint8"],
+      ["title", 5, 24, "utf8_padded"]
+    ]
+  }
+}

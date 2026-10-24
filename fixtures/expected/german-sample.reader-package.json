@@ -1,0 +1,12 @@
+{
+  "description": "Generated shape expected from shared reader package logic for the mandatory German sample text.",
+  "source_text": "Donaudampfschifffahrtsgesellschaft Straßenverkehrsordnung größer äußerst „Warum?“, fragte er. Da war’s plötzlich still.",
+  "must_preserve": [
+    "Donaudampfschifffahrtsgesellschaft",
+    "Straßenverkehrsordnung",
+    "größer",
+    "äußerst",
+    "„Warum?“,",
+    "war’s"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@pebble-rsvp/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./protocol": "./src/protocol.js",
+    "./reader-package": "./src/reader-package.js",
+    "./rsvp": "./src/rsvp.js",
+    "./unicode": "./src/unicode.js"
+  }
+}
