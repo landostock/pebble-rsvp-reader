@@ -23,8 +23,11 @@ class ReaderWindowEncoderTest {
 
         assertEquals(2, window.wordCount)
         assertEquals(2, window.totalWordCount)
+        assertEquals(0, window.focusWordIndex)
         assertEquals(49 + (4 + 5) + (4 + 5), window.payload.size)
         assertEquals("RWND", String(window.payload, 0, 4, StandardCharsets.US_ASCII))
+        assertEquals(3, window.payload[4].toInt())
+        assertEquals(0, window.payload[5].toInt())
         assertEquals("Ein langer Buchtitel".toByteArray(StandardCharsets.UTF_8).size, window.payload[16].toInt())
         assertTrue(window.payload.copyOfRange(17, 49).decodeToString().contains("Ein langer"))
     }
@@ -55,6 +58,7 @@ class ReaderWindowEncoderTest {
         val window = ReaderWindowEncoder.encode(UUID.randomUUID(), 1, packageJson, startWordIndex = 2)
 
         assertEquals(2, window.startWordIndex)
+        assertEquals(2, window.focusWordIndex)
         assertEquals(1, window.wordCount)
         assertEquals(2, java.nio.ByteBuffer.wrap(window.payload, 8, 4).int)
     }
@@ -106,7 +110,9 @@ class ReaderWindowEncoderTest {
             startMode = ReaderWindowStartMode.SentenceStart,
         )
 
-        assertEquals(2, window.startWordIndex)
+        assertEquals(0, window.startWordIndex)
+        assertEquals(2, window.focusWordIndex)
+        assertEquals(2, window.payload[5].toInt())
         assertEquals(4, window.payload[49 + 1].toInt() and 4)
     }
 
@@ -121,6 +127,7 @@ class ReaderWindowEncoderTest {
         )
 
         assertEquals(0, window.startWordIndex)
+        assertEquals(0, window.focusWordIndex)
     }
 
     @Test
@@ -134,6 +141,7 @@ class ReaderWindowEncoderTest {
         )
 
         assertEquals(0, window.startWordIndex)
+        assertEquals(0, window.focusWordIndex)
     }
 
     @Test
@@ -146,7 +154,9 @@ class ReaderWindowEncoderTest {
             startMode = ReaderWindowStartMode.NextSentence,
         )
 
-        assertEquals(2, window.startWordIndex)
+        assertEquals(0, window.startWordIndex)
+        assertEquals(2, window.focusWordIndex)
+        assertEquals(2, window.payload[5].toInt())
     }
 
     @Test
@@ -177,7 +187,26 @@ class ReaderWindowEncoderTest {
 
         assertEquals(80, window.wordCount)
         assertEquals(49 + 80 * 5, window.payload.size)
-        assertEquals(2, window.payload[4].toInt())
+        assertEquals(3, window.payload[4].toInt())
+    }
+
+    @Test
+    fun includesLeadingWordsBeforeAnExactJumpTarget() {
+        val tokens = (0 until 50).joinToString(",") { "{\"display\":\"W$it\"}" }
+        val packageJson = "{\"metadata\":{\"title\":\"Test\"},\"tokens\":[$tokens]}"
+
+        val window = ReaderWindowEncoder.encode(
+            UUID.randomUUID(),
+            1,
+            packageJson.toByteArray(StandardCharsets.UTF_8),
+            startWordIndex = 25,
+            startMode = ReaderWindowStartMode.ExactWithContext,
+        )
+
+        assertEquals(13, window.startWordIndex)
+        assertEquals(25, window.focusWordIndex)
+        assertEquals(12, window.payload[5].toInt())
+        assertEquals(37, window.wordCount)
     }
 
     private fun packageWithSentences() = """

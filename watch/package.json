@@ -1,7 +1,7 @@
 {
   "name": "pebble-rsvp-watch",
   "author": "Pebble RSVP contributors",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "keywords": [
     "pebble-app"

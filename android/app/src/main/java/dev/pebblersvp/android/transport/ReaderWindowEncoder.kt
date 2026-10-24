@@ -12,22 +12,25 @@ data class ReaderWindow(
     val revision: Long,
     val payload: ByteArray,
     val startWordIndex: Int,
+    val focusWordIndex: Int,
     val wordCount: Int,
     val totalWordCount: Int,
 )
 
 enum class ReaderWindowStartMode {
     Exact,
+    ExactWithContext,
     SentenceStart,
     PreviousSentence,
     NextSentence,
 }
 
 object ReaderWindowEncoder {
-    const val Version = 2
+    const val Version = 3
     const val MaxWords = 80
     const val MaxWordBytes = 64
     const val MaxTitleBytes = 32
+    const val LeadingContextWords = 12
     private const val HeaderBytes = 49
     private const val RecordHeaderBytes = 4
 
@@ -47,14 +50,16 @@ object ReaderWindowEncoder {
             ?: "Untitled"
         val tokens = root.getJSONArray("tokens")
         require(startWordIndex in 0 until tokens.length()) { "startWordIndex must point to a token" }
-        val resolvedStartIndex = resolveStartIndex(tokens, startWordIndex, startMode)
+        val focusWordIndex = resolveFocusIndex(tokens, startWordIndex, startMode)
+        val resolvedStartIndex = windowStartIndex(focusWordIndex, startMode)
+        val focusOffset = focusWordIndex - resolvedStartIndex
         val count = minOf(tokens.length() - resolvedStartIndex, MaxWords)
         val output = ByteBuffer.allocate(HeaderBytes + count * (RecordHeaderBytes + MaxWordBytes))
             .order(ByteOrder.BIG_ENDIAN)
 
         output.put("RWND".toByteArray(StandardCharsets.US_ASCII))
         output.put(Version.toByte())
-        output.put(0)
+        output.put(focusOffset.toByte())
         output.putShort(count.toShort())
         output.putInt(resolvedStartIndex)
         output.putInt(tokens.length())
@@ -99,6 +104,7 @@ object ReaderWindowEncoder {
             revision = revision,
             payload = output.array().copyOf(output.position()),
             startWordIndex = resolvedStartIndex,
+            focusWordIndex = focusWordIndex,
             wordCount = count,
             totalWordCount = tokens.length(),
         )
@@ -114,8 +120,9 @@ object ReaderWindowEncoder {
     ): ReaderWindow {
         require(revision in 0..0xffffffffL) { "book revision must fit uint32" }
         require(startWordIndex in 0 until index.tokenCount) { "startWordIndex must point to a token" }
-        val resolvedStartIndex = when (startMode) {
+        val focusWordIndex = when (startMode) {
             ReaderWindowStartMode.Exact -> startWordIndex
+            ReaderWindowStartMode.ExactWithContext -> startWordIndex
             ReaderWindowStartMode.SentenceStart -> index.sentenceStartAtOrBefore(startWordIndex)
             ReaderWindowStartMode.PreviousSentence -> {
                 val currentStart = index.sentenceStartAtOrBefore(startWordIndex)
@@ -123,12 +130,14 @@ object ReaderWindowEncoder {
             }
             ReaderWindowStartMode.NextSentence -> index.nextSentenceStart(startWordIndex)
         }
+        val resolvedStartIndex = windowStartIndex(focusWordIndex, startMode)
+        val focusOffset = focusWordIndex - resolvedStartIndex
         val count = minOf(index.tokenCount - resolvedStartIndex, MaxWords)
         val output = ByteBuffer.allocate(HeaderBytes + count * (RecordHeaderBytes + MaxWordBytes))
             .order(ByteOrder.BIG_ENDIAN)
         output.put("RWND".toByteArray(StandardCharsets.US_ASCII))
         output.put(Version.toByte())
-        output.put(0)
+        output.put(focusOffset.toByte())
         output.putShort(count.toShort())
         output.putInt(resolvedStartIndex)
         output.putInt(index.tokenCount)
@@ -142,18 +151,21 @@ object ReaderWindowEncoder {
             output.put(encoded)
         }
         return ReaderWindow(bookId, revision, output.array().copyOf(output.position()), resolvedStartIndex,
-            count, index.tokenCount)
+            focusWordIndex, count, index.tokenCount)
     }
 
-    private fun resolveStartIndex(
+    private fun resolveFocusIndex(
         tokens: org.json.JSONArray,
         requestedIndex: Int,
         mode: ReaderWindowStartMode,
     ): Int {
-        if (mode == ReaderWindowStartMode.Exact) return requestedIndex
+        if (mode == ReaderWindowStartMode.Exact || mode == ReaderWindowStartMode.ExactWithContext) {
+            return requestedIndex
+        }
         val currentStart = sentenceStartAtOrBefore(tokens, requestedIndex)
         return when (mode) {
             ReaderWindowStartMode.Exact -> requestedIndex
+            ReaderWindowStartMode.ExactWithContext -> requestedIndex
             ReaderWindowStartMode.SentenceStart -> currentStart
             ReaderWindowStartMode.PreviousSentence -> if (currentStart > 0) {
                 sentenceStartAtOrBefore(tokens, currentStart - 1)
@@ -161,6 +173,13 @@ object ReaderWindowEncoder {
             ReaderWindowStartMode.NextSentence -> nextSentenceStart(tokens, requestedIndex)
         }
     }
+
+    private fun windowStartIndex(focusWordIndex: Int, mode: ReaderWindowStartMode): Int =
+        if (mode == ReaderWindowStartMode.Exact) {
+            focusWordIndex
+        } else {
+            (focusWordIndex - LeadingContextWords).coerceAtLeast(0)
+        }
 
     private fun sentenceStartAtOrBefore(tokens: org.json.JSONArray, index: Int): Int {
         val sentenceId = tokens.getJSONObject(index).optInt("sentence_id", Int.MIN_VALUE)

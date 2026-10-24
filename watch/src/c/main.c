@@ -19,7 +19,7 @@
 #define MSG_REQUEST 4
 #define MSG_PROGRESS 5
 #define MSG_SETTINGS 6
-#define READER_WINDOW_VERSION 2
+#define READER_WINDOW_VERSION 3
 #define READER_WINDOW_HEADER_BYTES 49
 #define READER_WINDOW_RECORD_HEADER_BYTES 4
 #define READER_WINDOW_MAX_WORDS 80
@@ -2451,7 +2451,7 @@ static bool parse_library(const uint8_t *data, uint16_t length) {
   } else {
     s_resume_request_pending = resume_found;
     s_gallery_mode = !resume_found;
-    set_loading(resume_found);
+    set_loading_with_presentation(resume_found, LOADING_PRESENTATION_BOOK);
   }
   sort_library_entries();
   if (s_reader_layer != NULL) {
@@ -3856,7 +3856,7 @@ static void request_selected_book_at(uint32_t start_index, bool resume_at_senten
     return;
   }
   char request[24];
-  snprintf(request, sizeof(request), "%s:%lu", resume_at_sentence ? "resume" : "window",
+  snprintf(request, sizeof(request), "%s:%lu", resume_at_sentence ? "resume" : "jump",
            (unsigned long)start_index);
   const uint16_t request_length = (uint16_t)strlen(request);
   const uint32_t request_id = next_request_id();
@@ -3909,7 +3909,7 @@ static void request_selected_book_at(uint32_t start_index, bool resume_at_senten
   s_after_loaded = false;
   s_previous_loaded = false;
   expect_response(request_id, start_index, start_index, s_pending_book_id,
-                  s_pending_book_revision, WINDOW_TARGET_CURRENT, !resume_at_sentence);
+                  s_pending_book_revision, WINDOW_TARGET_CURRENT, false);
   s_navigation_request = false;
   stop_playback_clock();
   s_resume_after_window = false;
@@ -5364,10 +5364,12 @@ static bool parse_reader_window(const uint8_t *data, uint16_t length) {
   }
 
   const uint16_t count = read_u16_be(data + 6);
+  const uint8_t focus_offset = data[5];
   const uint32_t start_index = read_u32_be(data + 8);
   const uint32_t total_count = read_u32_be(data + 12);
   const uint8_t title_length = data[16];
-  if (count == 0 || count > READER_WINDOW_MAX_WORDS || title_length > READER_WINDOW_MAX_TITLE_BYTES ||
+  if (count == 0 || count > READER_WINDOW_MAX_WORDS || focus_offset >= count ||
+      title_length > READER_WINDOW_MAX_TITLE_BYTES ||
       total_count == 0 || start_index >= total_count || count > total_count - start_index) {
     return false;
   }
@@ -5393,6 +5395,9 @@ static bool parse_reader_window(const uint8_t *data, uint16_t length) {
     return false;
   }
   if (target != WINDOW_TARGET_CURRENT) {
+    if (focus_offset != 0) {
+      return false;
+    }
     if (total_count != s_remote_total_count) {
       return false;
     }
@@ -5521,7 +5526,7 @@ static bool parse_reader_window(const uint8_t *data, uint16_t length) {
     s_pending_loaded = false;
     s_after_loaded = false;
     s_previous_loaded = false;
-    s_word_index = 0;
+    s_word_index = focus_offset;
     s_word_segment_index = 0;
     if (!same_state_book) {
       s_state.absolute_word_index = start_index;
@@ -5719,7 +5724,7 @@ static bool send_account_settings_packet(void) {
 
 static void run_transport_followup(void) {
   if (s_resume_request_pending && !s_waiting_for_book) {
-    request_selected_book(LOADING_PRESENTATION_CORNER);
+    request_selected_book(LOADING_PRESENTATION_BOOK);
     return;
   }
   if (s_pending_book_request && !s_window_request_sent) {
@@ -5901,7 +5906,7 @@ static void init(void) {
   app_message_open(512, 128);
   accel_tap_service_subscribe(accel_tap_handler);
   window_stack_push(s_window, false);
-  set_loading(true);
+  set_loading_with_presentation(true, LOADING_PRESENTATION_BOOK);
 }
 
 static void deinit(void) {

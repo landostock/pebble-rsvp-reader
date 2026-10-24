@@ -239,6 +239,8 @@ class PebbleListenerService : BasePebbleListenerService() {
             requestText == "book" -> cachedStart to ReaderWindowStartMode.SentenceStart
             requestText.startsWith("resume:") -> requestText.removePrefix("resume:").toIntOrNull()
                 ?.let { it to ReaderWindowStartMode.SentenceStart }
+            requestText.startsWith("jump:") -> requestText.removePrefix("jump:").toIntOrNull()
+                ?.let { it to ReaderWindowStartMode.ExactWithContext }
             requestText.startsWith("rewind:") -> requestText.removePrefix("rewind:").toIntOrNull()
                 ?.let { it to ReaderWindowStartMode.PreviousSentence }
             requestText.startsWith("next:") -> requestText.removePrefix("next:").toIntOrNull()
@@ -273,7 +275,7 @@ class PebbleListenerService : BasePebbleListenerService() {
                 )
             }
             sendPayload(packet, watch, window.payload)
-            Log.d(Tag, "Sent requested reader window start=${window.startWordIndex} words=${window.wordCount} to $watch")
+            Log.d(Tag, "Sent requested reader window start=${window.startWordIndex} focus=${window.focusWordIndex} words=${window.wordCount} to $watch")
         } catch (error: Exception) {
             Log.e(Tag, "Failed to send requested reader window to $watch", error)
         }

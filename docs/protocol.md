@@ -53,7 +53,7 @@ Each packet contains:
 
 ## Reader Window Payload
 
-The first watch-readable payload is a compact `RWND` block carried by `data` packets. Version 2 contains the book title and a bounded window of up to 64 tokens, with each token carrying variable-length UTF-8 display text, its 300 WPM base duration, and paragraph/chapter flags. The Android companion creates this block from the locally cached reader package; the Pebble reconstructs and validates it before activating the reader window.
+The first watch-readable payload is a compact `RWND` block carried by `data` packets. Version 3 contains the book title, a focus offset, and a bounded window of up to 80 tokens, with each token carrying variable-length UTF-8 display text, its 300 WPM base duration, and paragraph/chapter flags. Resume and navigation responses include up to twelve leading tokens before the focused word so paused context is immediately available; exact prefetch windows retain a zero focus offset and contiguous boundaries. The Android companion creates this block from the locally cached reader package; the Pebble reconstructs and validates it before activating the reader window.
 
 The block is intentionally a rolling-window building block, not a complete book transfer. The watch keeps previous, current, next, and following windows in RAM and rotates them without interrupting normal RSVP playback. Subsequent windows come from Android's local package cache, never from the live server path.
 

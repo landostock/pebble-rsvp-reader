@@ -1,6 +1,6 @@
 {
   "name": "pebble-rsvp",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "description": "Pebble RSVP monorepo: shared reader/protocol logic plus watch, Android, web, and server packages.",
