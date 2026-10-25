@@ -44,7 +44,7 @@
 #define STATE_MAGIC 0x50525350UL
 #define STATE_VERSION 7
 #define SETTINGS_MAGIC 0x50525343UL
-#define SETTINGS_VERSION 8
+#define SETTINGS_VERSION 9
 #define PROGRESS_INTERVAL_SECONDS 15
 #define MAX_ACTIVE_INTERVAL_MS 60000UL
 #define CLOCK_WRAP_SECONDS (UINT32_MAX / 1000UL)
@@ -54,8 +54,10 @@
 #define TRANSPORT_FOLLOWUP_MS 300
 #define PREFETCH_TIMEOUT_MS 5000
 #define BOOKMARK_MAGIC 0x50424d4bUL
-#define BOOKMARK_VERSION 3
-#define BOOKMARK_MAX_COUNT 8
+#define BOOKMARK_VERSION 4
+#define BOOKMARK_MAX_COUNT 28
+#define BOOKMARKS_PER_CHUNK 7
+#define BOOKMARK_CHUNK_COUNT 4
 
 typedef enum ReaderProfile {
   READER_PROFILE_FOCUS = 0,
@@ -80,6 +82,7 @@ typedef enum ReaderBehaviorFlag {
   READER_BEHAVIOR_SENTENCE_RESUME = 1 << 0,
   READER_BEHAVIOR_ADAPTIVE_WORDS = 1 << 1,
   READER_BEHAVIOR_TOUCH = 1 << 2,
+  READER_BEHAVIOR_ATTENTION_GUARD = 1 << 3,
   READER_BEHAVIOR_CURRENT_SENTENCE_FIRST = 1 << 6,
   READER_BEHAVIOR_PAUSED_CONTEXT = 1 << 7,
 } ReaderBehaviorFlag;
@@ -144,9 +147,10 @@ typedef enum SettingRow {
   SETTING_LONG_WORDS = 4,
   SETTING_TOUCH = 5,
   SETTING_REWIND = 6,
-  SETTING_SLEEP_MODES = 7,
-  SETTING_RETURN_ORIGIN = 8,
-  SETTING_ROW_COUNT = 9,
+  SETTING_ATTENTION_GUARD = 7,
+  SETTING_SLEEP_MODES = 8,
+  SETTING_RETURN_ORIGIN = 9,
+  SETTING_ROW_COUNT = 10,
 } SettingRow;
 
 typedef enum DisplayRow {
@@ -367,16 +371,39 @@ typedef struct BookmarkRecord {
   uint32_t book_revision;
   uint32_t word_index;
   uint32_t total_word_count;
+  uint32_t created_at;
   uint8_t kind;
 } __attribute__((packed)) BookmarkRecord;
 
-typedef struct PersistedBookmarks {
+typedef struct BookmarkCollection {
+  uint8_t count;
+  BookmarkRecord records[BOOKMARK_MAX_COUNT];
+} BookmarkCollection;
+
+typedef struct PersistedBookmarkChunk {
+  uint32_t magic;
+  uint8_t version;
+  uint8_t chunk_index;
+  uint8_t count;
+  uint8_t total_count;
+  BookmarkRecord records[BOOKMARKS_PER_CHUNK];
+} __attribute__((packed)) PersistedBookmarkChunk;
+
+typedef struct BookmarkRecordV3 {
+  uint8_t book_id[16];
+  uint32_t book_revision;
+  uint32_t word_index;
+  uint32_t total_word_count;
+  uint8_t kind;
+} __attribute__((packed)) BookmarkRecordV3;
+
+typedef struct PersistedBookmarksV3 {
   uint32_t magic;
   uint8_t version;
   uint8_t count;
   uint16_t reserved;
-  BookmarkRecord records[BOOKMARK_MAX_COUNT];
-} __attribute__((packed)) PersistedBookmarks;
+  BookmarkRecordV3 records[8];
+} __attribute__((packed)) PersistedBookmarksV3;
 
 typedef struct BookmarkRecordV2 {
   uint8_t book_id[16];
@@ -390,11 +417,11 @@ typedef struct PersistedBookmarksV2 {
   uint8_t version;
   uint8_t count;
   uint16_t reserved;
-  BookmarkRecordV2 records[BOOKMARK_MAX_COUNT];
+  BookmarkRecordV2 records[8];
 } PersistedBookmarksV2;
 
-_Static_assert(sizeof(PersistedBookmarks) <= PERSIST_DATA_MAX_LENGTH,
-               "Bookmarks exceed Pebble persistence value limit");
+_Static_assert(sizeof(PersistedBookmarkChunk) <= PERSIST_DATA_MAX_LENGTH,
+               "Bookmark chunk exceeds Pebble persistence value limit");
 
 static Window *s_window;
 static Layer *s_reader_layer;
@@ -546,10 +573,7 @@ static uint8_t s_bookmark_selected;
 static bool s_bookmark_dialog_mode;
 static uint8_t s_bookmark_dialog_selected;
 static uint8_t s_sleep_selected;
-static PersistedBookmarks s_bookmarks = {
-  .magic = BOOKMARK_MAGIC,
-  .version = BOOKMARK_VERSION,
-};
+static BookmarkCollection s_bookmarks;
 static AppLanguage s_language = APP_LANGUAGE_ENGLISH;
 static LibrarySort s_library_sort = LIBRARY_SORT_LAST_READ;
 static PersistedState s_state = {
@@ -564,8 +588,8 @@ static PersistedSettings s_settings = {
   .custom_display_flags = CUSTOM_SHOW_TITLE | CUSTOM_SHOW_WPM | CUSTOM_SHOW_PROGRESS |
                           CUSTOM_SHOW_GUIDES | CUSTOM_HIGHLIGHT_ORP,
   .behavior_flags = READER_BEHAVIOR_SENTENCE_RESUME | READER_BEHAVIOR_ADAPTIVE_WORDS |
-                    READER_BEHAVIOR_TOUCH | READER_BEHAVIOR_CURRENT_SENTENCE_FIRST |
-                    READER_BEHAVIOR_PAUSED_CONTEXT,
+                    READER_BEHAVIOR_TOUCH | READER_BEHAVIOR_ATTENTION_GUARD |
+                    READER_BEHAVIOR_CURRENT_SENTENCE_FIRST | READER_BEHAVIOR_PAUSED_CONTEXT,
   .language = APP_LANGUAGE_ENGLISH,
   .library_sort = LIBRARY_SORT_LAST_READ,
   .backlight_mode = BACKLIGHT_SMART,
@@ -617,7 +641,9 @@ static bool s_up_button_down;
 static bool s_down_button_down;
 static bool s_button_chord_consumed;
 static bool s_sleep_session_active;
+static bool s_attention_guard_active;
 static bool s_attention_prompt;
+static SleepMode s_attention_prompt_mode;
 static bool s_attention_stop_pending;
 static bool s_sleep_end_pending;
 static bool s_sleep_settling;
@@ -642,6 +668,8 @@ static void set_loading_with_presentation(bool loading, LoadingPresentation pres
 static void feedback_timer_callback(void *context);
 static void schedule_transport_followup(void);
 static void cancel_prefetch_timeout(void);
+static SleepMode active_monitor_mode(void);
+static bool monitor_active(void);
 #ifdef _PBL_API_EXISTS_touch_service_subscribe
 static void touch_service_handler(const TouchEvent *event, void *context);
 #endif
@@ -1541,7 +1569,8 @@ static void load_settings(void) {
   PersistedSettings loaded;
   if (persist_exists(SETTINGS_KEY) &&
       persist_read_data(SETTINGS_KEY, &loaded, sizeof(loaded)) == (int)sizeof(loaded) &&
-      loaded.magic == SETTINGS_MAGIC && loaded.version == SETTINGS_VERSION &&
+      loaded.magic == SETTINGS_MAGIC &&
+      (loaded.version == SETTINGS_VERSION || loaded.version == 8) &&
       loaded.profile <= READER_PROFILE_CUSTOM && loaded.language <= APP_LANGUAGE_GERMAN &&
       loaded.library_sort < LIBRARY_SORT_COUNT && loaded.backlight_mode < BACKLIGHT_MODE_COUNT &&
       loaded.progress_display_mode < PROGRESS_DISPLAY_MODE_COUNT && loaded.sleep_mode < SLEEP_MODE_COUNT &&
@@ -1550,6 +1579,9 @@ static void load_settings(void) {
       loaded.attention_confirm_mode < ATTENTION_CONFIRM_COUNT &&
       loaded.sleep_bookmark_timing <= SLEEP_BOOKMARK_END) {
     s_settings = loaded;
+    if (loaded.version == 8) {
+      s_settings.behavior_flags |= READER_BEHAVIOR_ATTENTION_GUARD;
+    }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV7)) {
     PersistedSettingsV7 previous;
@@ -1564,7 +1596,7 @@ static void load_settings(void) {
         previous.sleep_bookmark_timing <= SLEEP_BOOKMARK_END) {
       s_settings.profile = previous.profile;
       s_settings.custom_display_flags = previous.custom_display_flags;
-      s_settings.behavior_flags = previous.behavior_flags;
+      s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_ATTENTION_GUARD;
       s_settings.language = previous.language;
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = previous.backlight_mode;
@@ -1586,8 +1618,8 @@ static void load_settings(void) {
         previous.progress_display_mode < PROGRESS_DISPLAY_MODE_COUNT) {
       s_settings.profile = previous.profile;
       s_settings.custom_display_flags = previous.custom_display_flags;
-      s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_CURRENT_SENTENCE_FIRST |
-          READER_BEHAVIOR_PAUSED_CONTEXT;
+      s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_ATTENTION_GUARD |
+          READER_BEHAVIOR_CURRENT_SENTENCE_FIRST | READER_BEHAVIOR_PAUSED_CONTEXT;
       s_settings.language = previous.language;
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = previous.backlight_mode;
@@ -1602,7 +1634,7 @@ static void load_settings(void) {
         previous.library_sort < LIBRARY_SORT_COUNT && previous.backlight_mode < BACKLIGHT_MODE_COUNT) {
       s_settings.profile = previous.profile;
       s_settings.custom_display_flags = previous.custom_display_flags;
-      s_settings.behavior_flags = previous.behavior_flags;
+      s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_ATTENTION_GUARD;
       s_settings.language = previous.language;
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = previous.backlight_mode;
@@ -1617,7 +1649,7 @@ static void load_settings(void) {
         previous.library_sort < LIBRARY_SORT_COUNT) {
       s_settings.profile = previous.profile;
       s_settings.custom_display_flags = previous.custom_display_flags;
-      s_settings.behavior_flags = previous.behavior_flags;
+      s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_ATTENTION_GUARD;
       s_settings.language = previous.language;
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = BACKLIGHT_SMART;
@@ -1630,7 +1662,7 @@ static void load_settings(void) {
         previous.profile <= READER_PROFILE_CUSTOM) {
       s_settings.profile = previous.profile;
       s_settings.custom_display_flags = previous.custom_display_flags;
-      s_settings.behavior_flags = previous.behavior_flags;
+      s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_ATTENTION_GUARD;
     }
   }
   s_language = (AppLanguage)s_settings.language;
@@ -1638,36 +1670,140 @@ static void load_settings(void) {
 }
 
 static void persist_bookmarks(void) {
-  s_bookmarks.magic = BOOKMARK_MAGIC;
-  s_bookmarks.version = BOOKMARK_VERSION;
   if (s_bookmarks.count == 0) {
-    persist_delete(BOOKMARKS_KEY);
+    for (uint8_t chunk_index = 0; chunk_index < BOOKMARK_CHUNK_COUNT; chunk_index += 1) {
+      persist_delete(BOOKMARKS_KEY + chunk_index);
+    }
     return;
   }
-  persist_write_data(BOOKMARKS_KEY, &s_bookmarks, sizeof(s_bookmarks));
+
+  // Write data chunks first and the manifest chunk last, then remove obsolete chunks.
+  for (uint8_t chunk_index = 1; chunk_index < BOOKMARK_CHUNK_COUNT; chunk_index += 1) {
+    const uint8_t start = (uint8_t)chunk_index * BOOKMARKS_PER_CHUNK;
+    if (start >= s_bookmarks.count) continue;
+    PersistedBookmarkChunk chunk = {
+      .magic = BOOKMARK_MAGIC,
+      .version = BOOKMARK_VERSION,
+      .chunk_index = chunk_index,
+      .total_count = s_bookmarks.count,
+    };
+    const uint8_t remaining = s_bookmarks.count - start;
+    chunk.count = remaining < BOOKMARKS_PER_CHUNK ? remaining : BOOKMARKS_PER_CHUNK;
+    memcpy(chunk.records, &s_bookmarks.records[start], sizeof(BookmarkRecord) * chunk.count);
+    persist_write_data(BOOKMARKS_KEY + chunk_index, &chunk, sizeof(chunk));
+  }
+  PersistedBookmarkChunk first = {
+    .magic = BOOKMARK_MAGIC,
+    .version = BOOKMARK_VERSION,
+    .chunk_index = 0,
+    .count = s_bookmarks.count < BOOKMARKS_PER_CHUNK
+        ? s_bookmarks.count : BOOKMARKS_PER_CHUNK,
+    .total_count = s_bookmarks.count,
+  };
+  memcpy(first.records, s_bookmarks.records, sizeof(BookmarkRecord) * first.count);
+  persist_write_data(BOOKMARKS_KEY, &first, sizeof(first));
+
+  const uint8_t required_chunks =
+      (s_bookmarks.count + BOOKMARKS_PER_CHUNK - 1) / BOOKMARKS_PER_CHUNK;
+  for (uint8_t chunk_index = required_chunks;
+       chunk_index < BOOKMARK_CHUNK_COUNT; chunk_index += 1) {
+    persist_delete(BOOKMARKS_KEY + chunk_index);
+  }
+}
+
+static void sort_bookmarks_newest_first(void) {
+  for (uint8_t left = 0; left < s_bookmarks.count; left += 1) {
+    for (uint8_t right = left + 1; right < s_bookmarks.count; right += 1) {
+      if (s_bookmarks.records[right].created_at > s_bookmarks.records[left].created_at) {
+        BookmarkRecord swap = s_bookmarks.records[left];
+        s_bookmarks.records[left] = s_bookmarks.records[right];
+        s_bookmarks.records[right] = swap;
+      }
+    }
+  }
+}
+
+static uint32_t migrated_bookmark_time(uint8_t index, uint8_t count) {
+  const time_t now = time(NULL);
+  const uint8_t age = count > index ? count - index - 1 : 0;
+  return now > age ? (uint32_t)(now - age) : (uint32_t)index + 1;
+}
+
+static bool load_bookmark_chunks(void) {
+  if (!persist_exists(BOOKMARKS_KEY) ||
+      persist_get_size(BOOKMARKS_KEY) != (int)sizeof(PersistedBookmarkChunk)) {
+    return false;
+  }
+  PersistedBookmarkChunk first;
+  if (persist_read_data(BOOKMARKS_KEY, &first, sizeof(first)) != (int)sizeof(first) ||
+      first.magic != BOOKMARK_MAGIC || first.version != BOOKMARK_VERSION ||
+      first.chunk_index != 0 || first.total_count == 0 ||
+      first.total_count > BOOKMARK_MAX_COUNT ||
+      first.count != (first.total_count < BOOKMARKS_PER_CHUNK
+                          ? first.total_count : BOOKMARKS_PER_CHUNK)) {
+    return false;
+  }
+
+  s_bookmarks.count = first.total_count;
+  memcpy(s_bookmarks.records, first.records, sizeof(BookmarkRecord) * first.count);
+  for (uint8_t chunk_index = 1;
+       chunk_index * BOOKMARKS_PER_CHUNK < first.total_count; chunk_index += 1) {
+    PersistedBookmarkChunk chunk;
+    const uint8_t start = chunk_index * BOOKMARKS_PER_CHUNK;
+    const uint8_t remaining = first.total_count - start;
+    const uint8_t expected = remaining < BOOKMARKS_PER_CHUNK ? remaining : BOOKMARKS_PER_CHUNK;
+    if (persist_read_data(BOOKMARKS_KEY + chunk_index, &chunk, sizeof(chunk)) !=
+            (int)sizeof(chunk) ||
+        chunk.magic != BOOKMARK_MAGIC || chunk.version != BOOKMARK_VERSION ||
+        chunk.chunk_index != chunk_index || chunk.total_count != first.total_count ||
+        chunk.count != expected) {
+      memset(&s_bookmarks, 0, sizeof(s_bookmarks));
+      return false;
+    }
+    memcpy(&s_bookmarks.records[start], chunk.records, sizeof(BookmarkRecord) * chunk.count);
+  }
+  sort_bookmarks_newest_first();
+  return true;
 }
 
 static void load_bookmarks(void) {
-  PersistedBookmarks loaded;
+  memset(&s_bookmarks, 0, sizeof(s_bookmarks));
+  if (load_bookmark_chunks()) {
+    return;
+  }
+
   if (persist_exists(BOOKMARKS_KEY) &&
-      persist_read_data(BOOKMARKS_KEY, &loaded, sizeof(loaded)) == (int)sizeof(loaded) &&
-      loaded.magic == BOOKMARK_MAGIC && loaded.version == BOOKMARK_VERSION &&
-      loaded.count <= BOOKMARK_MAX_COUNT) {
-    s_bookmarks = loaded;
-  } else if (persist_exists(BOOKMARKS_KEY) &&
-             persist_get_size(BOOKMARKS_KEY) == (int)sizeof(PersistedBookmarksV2)) {
-    PersistedBookmarksV2 previous;
+      persist_get_size(BOOKMARKS_KEY) == (int)sizeof(PersistedBookmarksV3)) {
+    PersistedBookmarksV3 previous;
     if (persist_read_data(BOOKMARKS_KEY, &previous, sizeof(previous)) == (int)sizeof(previous) &&
-        previous.magic == BOOKMARK_MAGIC && previous.version == 2 &&
-        previous.count <= BOOKMARK_MAX_COUNT) {
+        previous.magic == BOOKMARK_MAGIC && previous.version == 3 && previous.count <= 8) {
       s_bookmarks.count = previous.count;
       for (uint8_t index = 0; index < previous.count; index += 1) {
         memcpy(s_bookmarks.records[index].book_id, previous.records[index].book_id, 16);
         s_bookmarks.records[index].book_revision = previous.records[index].book_revision;
         s_bookmarks.records[index].word_index = previous.records[index].word_index;
         s_bookmarks.records[index].total_word_count = previous.records[index].total_word_count;
+        s_bookmarks.records[index].created_at = migrated_bookmark_time(index, previous.count);
+        s_bookmarks.records[index].kind = previous.records[index].kind;
+      }
+      sort_bookmarks_newest_first();
+      persist_bookmarks();
+    }
+  } else if (persist_exists(BOOKMARKS_KEY) &&
+             persist_get_size(BOOKMARKS_KEY) == (int)sizeof(PersistedBookmarksV2)) {
+    PersistedBookmarksV2 previous;
+    if (persist_read_data(BOOKMARKS_KEY, &previous, sizeof(previous)) == (int)sizeof(previous) &&
+        previous.magic == BOOKMARK_MAGIC && previous.version == 2 && previous.count <= 8) {
+      s_bookmarks.count = previous.count;
+      for (uint8_t index = 0; index < previous.count; index += 1) {
+        memcpy(s_bookmarks.records[index].book_id, previous.records[index].book_id, 16);
+        s_bookmarks.records[index].book_revision = previous.records[index].book_revision;
+        s_bookmarks.records[index].word_index = previous.records[index].word_index;
+        s_bookmarks.records[index].total_word_count = previous.records[index].total_word_count;
+        s_bookmarks.records[index].created_at = migrated_bookmark_time(index, previous.count);
         s_bookmarks.records[index].kind = 0;
       }
+      sort_bookmarks_newest_first();
       persist_bookmarks();
     }
   }
@@ -2640,7 +2776,8 @@ static void draw_sleep_settings(GContext *ctx, GRect bounds) {
       s_sleep_session_active ? localized("Stop", "Beenden") : localized("Start", "Starten"),
   };
   graphics_context_set_text_color(ctx, GColorWhite);
-  graphics_draw_text(ctx, localized("Sleep", "Schlaf"), fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+  graphics_draw_text(ctx, localized("Safety & sleep", "Sicherheit & Schlaf"),
+                     fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
                      GRect(8, 5, bounds.size.w - 16, 24), GTextOverflowModeTrailingEllipsis,
                      GTextAlignmentLeft, NULL);
   for (uint8_t row = 0; row < SLEEP_ROW_COUNT; row += 1) {
@@ -2687,7 +2824,8 @@ static const char *setting_label(uint8_t row) {
       localized("Speed", "Tempo"), localized("Resume", "Wiedereinstieg"),
       localized("Long words", "Lange Wörter"), "Touch",
       localized("Right swipe", "Rechts wischen"),
-      localized("Sleep modes", "Schlafmodi"),
+      localized("Attention check", "Aufmerksamkeitscheck"),
+      localized("Safety & sleep", "Sicherheit & Schlaf"),
       localized("Previous position", "Vorherige Position"),
   };
   return row < SETTING_ROW_COUNT ? labels[row] : "";
@@ -2739,6 +2877,10 @@ static void setting_value(uint8_t row, char *value, size_t value_size) {
           ? localized("Current first", "Aktueller Satz")
           : localized("Previous", "Voriger Satz"));
       break;
+    case SETTING_ATTENTION_GUARD:
+      snprintf(value, value_size, "%s",
+               on_off(behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD)));
+      break;
     case SETTING_SLEEP_MODES:
       snprintf(value, value_size, "%s", sleep_mode_name());
       break;
@@ -2760,6 +2902,37 @@ static const char *bookmark_book_title(const BookmarkRecord *bookmark) {
     }
   }
   return localized("Unknown book", "Unbekanntes Buch");
+}
+
+static void bookmark_created_label(const BookmarkRecord *bookmark, char *target,
+                                   size_t target_size) {
+  const time_t created = (time_t)bookmark->created_at;
+  const time_t now = time(NULL);
+  const struct tm *created_local = localtime(&created);
+  if (created_local == NULL || bookmark->created_at == 0) {
+    snprintf(target, target_size, "%s", localized("Earlier", "Früher"));
+    return;
+  }
+  const struct tm created_parts = *created_local;
+  char clock[8];
+  strftime(clock, sizeof(clock), "%H:%M", &created_parts);
+  const uint32_t created_day = local_day_number(created);
+  const uint32_t today = local_day_number(now);
+  char date[22];
+  if (created_day == today) {
+    snprintf(date, sizeof(date), "%s %s", localized("Today", "Heute"), clock);
+  } else if (created_day + 1 == today) {
+    snprintf(date, sizeof(date), "%s %s", localized("Yesterday", "Gestern"), clock);
+  } else if (s_language == APP_LANGUAGE_GERMAN) {
+    strftime(date, sizeof(date), "%d.%m.%y  %H:%M", &created_parts);
+  } else {
+    strftime(date, sizeof(date), "%d %b %y  %H:%M", &created_parts);
+  }
+  if (bookmark->kind == 1) {
+    snprintf(target, target_size, "%s · %s", localized("Sleep", "Schlaf"), date);
+  } else {
+    snprintf(target, target_size, "%s", date);
+  }
 }
 
 static void draw_bookmarks(GContext *ctx, GRect bounds) {
@@ -2797,14 +2970,9 @@ static void draw_bookmarks(GContext *ctx, GRect bounds) {
     graphics_draw_text(ctx, percent, fonts_get_system_font(FONT_KEY_GOTHIC_14),
                        GRect(bounds.size.w - 58, top - 1, 50, 19), GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentRight, NULL);
-    static char position[18];
-    if (bookmark->kind == 1) {
-      snprintf(position, sizeof(position), "%s", localized("Sleep position", "Schlafposition"));
-    } else {
-      snprintf(position, sizeof(position), "%lu / %lu", (unsigned long)bookmark->word_index,
-               (unsigned long)bookmark->total_word_count);
-    }
-    graphics_draw_text(ctx, position, fonts_get_system_font(FONT_KEY_GOTHIC_14),
+    char created[32];
+    bookmark_created_label(bookmark, created, sizeof(created));
+    graphics_draw_text(ctx, created, fonts_get_system_font(FONT_KEY_GOTHIC_14),
                        GRect(10, top + 15, bounds.size.w - 20, 18), GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentLeft, NULL);
   }
@@ -3221,9 +3389,10 @@ static void draw_corner_loading(GContext *ctx, GRect bounds) {
 }
 
 static void draw_sleep_status(GContext *ctx, GRect bounds) {
-  if (!s_sleep_session_active) return;
+  if (!monitor_active()) return;
+  const SleepMode active_mode = active_monitor_mode();
   if (!s_attention_prompt && !s_sleep_settling &&
-      s_settings.sleep_mode == SLEEP_MODE_ATTENTION) {
+      active_mode == SLEEP_MODE_ATTENTION) {
     if (!playback_requested() && !s_context_mode && s_attention_icon != NULL) {
       graphics_context_set_compositing_mode(ctx, GCompOpSet);
       graphics_draw_bitmap_in_rect(ctx, s_attention_icon,
@@ -3259,7 +3428,7 @@ static void draw_sleep_status(GContext *ctx, GRect bounds) {
                        GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
     return;
   }
-  if (s_settings.sleep_mode != SLEEP_MODE_TIMER) return;
+  if (active_mode != SLEEP_MODE_TIMER) return;
   static char timer[12];
   snprintf(timer, sizeof(timer), "%lu:%02lu", (unsigned long)(remaining / 60),
            (unsigned long)(remaining % 60));
@@ -3288,7 +3457,9 @@ static uint8_t sleep_shortcut_option_count(void) {
 static const char *sleep_shortcut_label(uint8_t index) {
   if (!s_sleep_session_active) {
     if (index == 0) return localized("Timer", "Timer");
-    if (index == 1) return localized("Attention", "Aufmerksamkeit");
+    if (index == 1) return behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD)
+        ? localized("Attention off", "Aufmerksamkeit aus")
+        : localized("Attention on", "Aufmerksamkeit ein");
     return localized("Cancel", "Abbrechen");
   }
   if (s_settings.sleep_mode == SLEEP_MODE_TIMER) {
@@ -3339,7 +3510,9 @@ static void draw_sleep_shortcut(GContext *ctx, GRect bounds) {
                      GTextAlignmentLeft, NULL);
   graphics_context_set_text_color(ctx, GColorLightGray);
   const char *status = !s_sleep_session_active
-      ? localized("Choose a mode", "Modus wählen")
+      ? (behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD)
+          ? localized("Attention active", "Aufmerksamkeit aktiv")
+          : localized("Choose a mode", "Modus wählen"))
       : s_settings.sleep_mode == SLEEP_MODE_TIMER
           ? localized("Timer active", "Timer aktiv")
           : localized("Attention active", "Aufmerksamkeit aktiv");
@@ -3477,11 +3650,11 @@ static void reader_update_proc(Layer *layer, GContext *ctx) {
   const bool has_bookmarks = current_position_is_bookmarked();
   if (s_remote_loaded && reader_display_enabled(CUSTOM_SHOW_TITLE)) {
     int16_t right_inset = corner_loading || has_bookmarks ? 40 : 16;
-    if (s_sleep_session_active && !s_attention_prompt && !s_sleep_settling &&
+    if (monitor_active() && !s_attention_prompt && !s_sleep_settling &&
         !playback_requested()) {
-      if (s_settings.sleep_mode == SLEEP_MODE_TIMER) {
+      if (active_monitor_mode() == SLEEP_MODE_TIMER) {
         right_inset = 76;
-      } else if (s_settings.sleep_mode == SLEEP_MODE_ATTENTION && !s_context_mode) {
+      } else if (active_monitor_mode() == SLEEP_MODE_ATTENTION && !s_context_mode) {
         right_inset = 36;
       }
     }
@@ -3522,6 +3695,59 @@ static void begin_attention_prompt(void);
 static void finish_sleep_session(void);
 static void confirm_attention(AttentionConfirmMode source);
 static void accel_tap_handler(AccelAxisType axis, int32_t direction);
+static void arm_attention_guard(void);
+static void sleep_tick_callback(void *context);
+
+static SleepMode active_monitor_mode(void) {
+  if (s_attention_prompt) return s_attention_prompt_mode;
+  if (s_attention_guard_active) return SLEEP_MODE_ATTENTION;
+  return s_sleep_session_active ? (SleepMode)s_settings.sleep_mode : SLEEP_MODE_OFF;
+}
+
+static bool monitor_active(void) {
+  return s_attention_guard_active || s_sleep_session_active || s_attention_prompt ||
+         s_sleep_settling;
+}
+
+static bool monitor_needs_ticks(void) {
+  return active_monitor_mode() == SLEEP_MODE_TIMER || playback_requested() ||
+         s_attention_prompt || s_sleep_settling;
+}
+
+static void schedule_monitor_tick(uint32_t delay_ms) {
+  if (s_sleep_timer != NULL) app_timer_cancel(s_sleep_timer);
+  s_sleep_timer = NULL;
+  if (monitor_active() && monitor_needs_ticks()) {
+    s_sleep_timer = app_timer_register(delay_ms, sleep_tick_callback, NULL);
+  }
+}
+
+static void arm_attention_guard(void) {
+  if (!s_remote_loaded || s_sleep_session_active ||
+      !behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD)) {
+    return;
+  }
+  s_attention_guard_active = true;
+  s_attention_stop_pending = false;
+  s_sleep_phase_start_position = current_absolute_position();
+  s_sleep_deadline = time(NULL) + (time_t)attention_interval_minutes() * 60;
+  schedule_monitor_tick(1000);
+}
+
+static void set_attention_guard_enabled(bool enabled) {
+  if (enabled) {
+    s_settings.behavior_flags |= READER_BEHAVIOR_ATTENTION_GUARD;
+    if (playback_requested()) arm_attention_guard();
+  } else {
+    s_settings.behavior_flags &= ~READER_BEHAVIOR_ATTENTION_GUARD;
+    s_attention_guard_active = false;
+    s_attention_stop_pending = false;
+    if (!s_sleep_session_active && s_sleep_timer != NULL) {
+      app_timer_cancel(s_sleep_timer);
+      s_sleep_timer = NULL;
+    }
+  }
+}
 
 static void timer_callback(void *context) {
   s_timer = NULL;
@@ -3594,8 +3820,19 @@ static void set_playing(bool playing) {
       s_session_started = true;
     }
     s_play_tick_ms = current_millis();
+    if (!s_sleep_session_active) arm_attention_guard();
+    if (active_monitor_mode() == SLEEP_MODE_ATTENTION) {
+      s_sleep_deadline = time(NULL) + (time_t)attention_interval_minutes() * 60;
+      schedule_monitor_tick(1000);
+    }
   } else {
     s_play_tick_ms = 0;
+    if (active_monitor_mode() == SLEEP_MODE_ATTENTION && !s_attention_prompt &&
+        !s_sleep_settling) {
+      s_attention_stop_pending = false;
+      s_sleep_deadline = time(NULL) + (time_t)attention_interval_minutes() * 60;
+      schedule_monitor_tick(1000);
+    }
   }
   update_backlight();
   persist_state();
@@ -3612,6 +3849,7 @@ static void sleep_close_callback(void *context) {
 }
 
 static void finish_sleep_session(void) {
+  const SleepMode finished_mode = active_monitor_mode();
   s_attention_stop_pending = false;
   s_sleep_end_pending = false;
   s_attention_prompt = false;
@@ -3620,17 +3858,20 @@ static void finish_sleep_session(void) {
     store_sleep_bookmark(current_absolute_position());
   }
   s_sleep_session_active = false;
+  s_attention_guard_active = false;
   set_playing(false);
   persist_state();
   s_progress_pending = true;
   send_progress_packet();
-  if (s_settings.sleep_mode == SLEEP_MODE_TIMER) vibes_double_pulse();
+  if (finished_mode == SLEEP_MODE_TIMER) vibes_double_pulse();
   if (s_sleep_close_timer == NULL) {
     s_sleep_close_timer = app_timer_register(700, sleep_close_callback, NULL);
   }
 }
 
 static void begin_attention_prompt(void) {
+  s_attention_prompt_mode = s_attention_stop_pending ? SLEEP_MODE_ATTENTION
+                                                     : SLEEP_MODE_TIMER;
   s_attention_stop_pending = false;
   s_sleep_end_pending = false;
   s_sleep_resume_after_settle = playback_requested();
@@ -3638,23 +3879,21 @@ static void begin_attention_prompt(void) {
   s_attention_prompt = true;
   s_sleep_settling = false;
   s_attention_prompt_deadline = time(NULL) + attention_grace_seconds();
-  if (s_settings.sleep_mode == SLEEP_MODE_TIMER) vibes_short_pulse();
+  if (s_attention_prompt_mode == SLEEP_MODE_TIMER) vibes_short_pulse();
+  schedule_monitor_tick(1000);
   if (s_reader_layer != NULL) layer_mark_dirty(s_reader_layer);
 }
 
 static void sleep_tick_callback(void *context) {
   s_sleep_timer = NULL;
-  if (!s_sleep_session_active) return;
+  if (!monitor_active()) return;
   if (s_sleep_settling) {
     if (current_millis() - s_sleep_settle_started_ms >= 650) {
       s_sleep_settling = false;
       if (s_sleep_resume_after_settle) set_playing(true);
     }
     if (s_reader_layer != NULL) layer_mark_dirty(s_reader_layer);
-    if (s_sleep_session_active) {
-      s_sleep_timer = app_timer_register(s_sleep_settling ? 80 : 1000,
-                                         sleep_tick_callback, NULL);
-    }
+    schedule_monitor_tick(s_sleep_settling ? 80 : 1000);
     return;
   }
   const time_t now = time(NULL);
@@ -3664,20 +3903,25 @@ static void sleep_tick_callback(void *context) {
       return;
     }
   } else if (now >= s_sleep_deadline) {
-    if (s_settings.sleep_mode == SLEEP_MODE_ATTENTION) {
+    if (active_monitor_mode() == SLEEP_MODE_ATTENTION) {
+      if (!playback_requested()) {
+        s_sleep_deadline = now + (time_t)attention_interval_minutes() * 60;
+        schedule_monitor_tick(1000);
+        return;
+      }
       s_attention_stop_pending = true;
-      if (!playback_requested()) begin_attention_prompt();
     } else {
       s_sleep_end_pending = true;
       if (!playback_requested()) begin_attention_prompt();
     }
   }
   if (s_reader_layer != NULL) layer_mark_dirty(s_reader_layer);
-  if (s_sleep_session_active) s_sleep_timer = app_timer_register(1000, sleep_tick_callback, NULL);
+  schedule_monitor_tick(1000);
 }
 
 static void start_sleep_session(void) {
   if (!s_remote_loaded || s_settings.sleep_mode == SLEEP_MODE_OFF) return;
+  s_attention_guard_active = false;
   s_sleep_session_active = true;
   s_attention_prompt = false;
   s_sleep_settling = false;
@@ -3690,8 +3934,7 @@ static void start_sleep_session(void) {
   if (s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_START) {
     store_sleep_bookmark(s_sleep_phase_start_position);
   }
-  if (s_sleep_timer != NULL) app_timer_cancel(s_sleep_timer);
-  s_sleep_timer = app_timer_register(1000, sleep_tick_callback, NULL);
+  schedule_monitor_tick(1000);
 }
 
 static void stop_sleep_session(void) {
@@ -3700,10 +3943,9 @@ static void stop_sleep_session(void) {
   s_sleep_settling = false;
   s_attention_stop_pending = false;
   s_sleep_end_pending = false;
-  if (s_sleep_timer != NULL) {
-    app_timer_cancel(s_sleep_timer);
-    s_sleep_timer = NULL;
-  }
+  if (s_sleep_timer != NULL) app_timer_cancel(s_sleep_timer);
+  s_sleep_timer = NULL;
+  arm_attention_guard();
 }
 
 static void close_sleep_shortcut(bool resume) {
@@ -3728,10 +3970,15 @@ static void open_sleep_shortcut(void) {
 static void activate_sleep_shortcut_selection(void) {
   const uint8_t selected = s_sleep_shortcut_selected;
   if (!s_sleep_session_active) {
-    if (selected < 2) {
-      s_settings.sleep_mode = selected == 0 ? SLEEP_MODE_TIMER : SLEEP_MODE_ATTENTION;
+    if (selected == 0) {
+      s_settings.sleep_mode = SLEEP_MODE_TIMER;
       persist_settings();
       start_sleep_session();
+      close_sleep_shortcut(true);
+    } else if (selected == 1) {
+      set_attention_guard_enabled(
+          !behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD));
+      persist_settings();
       close_sleep_shortcut(true);
     } else {
       close_sleep_shortcut(true);
@@ -3746,9 +3993,8 @@ static void activate_sleep_shortcut_selection(void) {
       s_sleep_deadline += (time_t)sleep_duration_minutes() * 60;
     } else if (selected == 2) {
       stop_sleep_session();
-      s_settings.sleep_mode = SLEEP_MODE_ATTENTION;
+      set_attention_guard_enabled(true);
       persist_settings();
-      start_sleep_session();
     }
     close_sleep_shortcut(true);
     return;
@@ -3773,23 +4019,23 @@ static void confirm_attention(AttentionConfirmMode source) {
   s_sleep_settling = true;
   s_sleep_settle_started_ms = current_millis();
   s_sleep_phase_start_position = current_absolute_position();
-  const uint8_t phase_minutes = s_settings.sleep_mode == SLEEP_MODE_TIMER
+  const uint8_t phase_minutes = s_attention_prompt_mode == SLEEP_MODE_TIMER
       ? 10 : attention_interval_minutes();
   s_sleep_deadline = time(NULL) + (time_t)phase_minutes * 60;
   if (s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_START) {
     store_sleep_bookmark(s_sleep_phase_start_position);
   }
-  if (s_sleep_timer != NULL) app_timer_cancel(s_sleep_timer);
-  s_sleep_timer = app_timer_register(80, sleep_tick_callback, NULL);
+  schedule_monitor_tick(80);
   if (s_reader_layer != NULL) layer_mark_dirty(s_reader_layer);
 }
 
 static void note_attention_activity(void) {
-  if (!s_sleep_session_active || s_settings.sleep_mode != SLEEP_MODE_ATTENTION ||
+  if (!monitor_active() || active_monitor_mode() != SLEEP_MODE_ATTENTION ||
       s_attention_prompt || s_sleep_settling) {
     return;
   }
   s_sleep_phase_start_position = current_absolute_position();
+  s_attention_stop_pending = false;
   s_sleep_deadline = time(NULL) + (time_t)attention_interval_minutes() * 60;
 }
 
@@ -4087,42 +4333,55 @@ static void return_to_navigation_origin(void) {
   request_selected_book_at(origin, false, LOADING_PRESENTATION_CORNER);
 }
 
-static void delete_bookmark_at(uint8_t index) {
-  if (index >= s_bookmarks.count) {
-    return;
-  }
+static void remove_bookmark_at(uint8_t index) {
+  if (index >= s_bookmarks.count) return;
   s_bookmarks.count -= 1;
   if (index < s_bookmarks.count) {
     memmove(&s_bookmarks.records[index], &s_bookmarks.records[index + 1],
             sizeof(BookmarkRecord) * (s_bookmarks.count - index));
   }
   memset(&s_bookmarks.records[s_bookmarks.count], 0, sizeof(BookmarkRecord));
+}
+
+static void delete_bookmark_at(uint8_t index) {
+  if (index >= s_bookmarks.count) return;
+  remove_bookmark_at(index);
   if (s_bookmark_selected >= s_bookmarks.count && s_bookmark_selected > 0) {
     s_bookmark_selected -= 1;
   }
   persist_bookmarks();
 }
 
+static void insert_bookmark_newest(const BookmarkRecord *record) {
+  const uint8_t retained = s_bookmarks.count < BOOKMARK_MAX_COUNT
+      ? s_bookmarks.count : BOOKMARK_MAX_COUNT - 1;
+  if (retained > 0) {
+    memmove(&s_bookmarks.records[1], &s_bookmarks.records[0],
+            sizeof(BookmarkRecord) * retained);
+  }
+  s_bookmarks.records[0] = *record;
+  s_bookmarks.count = retained + 1;
+  s_bookmark_selected = 0;
+}
+
 static void store_sleep_bookmark(uint32_t position) {
   if (!s_remote_loaded || s_remote_total_count == 0) return;
-  uint8_t destination = BOOKMARK_MAX_COUNT;
   for (uint8_t index = 0; index < s_bookmarks.count; index += 1) {
-    BookmarkRecord *record = &s_bookmarks.records[index];
+    const BookmarkRecord *record = &s_bookmarks.records[index];
     if (record->kind == 1 && memcmp(record->book_id, s_remote_book_id, 16) == 0) {
-      destination = index;
+      remove_bookmark_at(index);
       break;
     }
   }
-  if (destination == BOOKMARK_MAX_COUNT) {
-    if (s_bookmarks.count >= BOOKMARK_MAX_COUNT) return;
-    destination = s_bookmarks.count++;
-  }
-  BookmarkRecord *record = &s_bookmarks.records[destination];
-  memcpy(record->book_id, s_remote_book_id, 16);
-  record->book_revision = s_remote_revision;
-  record->word_index = position < s_remote_total_count ? position : s_remote_total_count - 1;
-  record->total_word_count = s_remote_total_count;
-  record->kind = 1;
+  BookmarkRecord record = {
+    .book_revision = s_remote_revision,
+    .word_index = position < s_remote_total_count ? position : s_remote_total_count - 1,
+    .total_word_count = s_remote_total_count,
+    .created_at = (uint32_t)time(NULL),
+    .kind = 1,
+  };
+  memcpy(record.book_id, s_remote_book_id, 16);
+  insert_bookmark_newest(&record);
   persist_bookmarks();
 }
 
@@ -4134,7 +4393,6 @@ static void add_bookmark(void) {
   }
   set_playing(false);
   const uint32_t position = current_absolute_position();
-  uint8_t destination = s_bookmarks.count;
   for (uint8_t index = 0; index < s_bookmarks.count; index += 1) {
     const BookmarkRecord *record = &s_bookmarks.records[index];
     if (record->kind == 0 && record->word_index == position &&
@@ -4144,26 +4402,22 @@ static void add_bookmark(void) {
       layer_mark_dirty(s_reader_layer);
       return;
     }
-    if (memcmp(record->book_id, s_remote_book_id, 16) == 0 &&
+    if (record->kind == 0 && memcmp(record->book_id, s_remote_book_id, 16) == 0 &&
         record->word_index > position - (position > 20 ? 20 : position) &&
         record->word_index < position + 20) {
-      destination = index;
+      remove_bookmark_at(index);
       break;
     }
   }
-  if (destination >= BOOKMARK_MAX_COUNT) {
-    memmove(&s_bookmarks.records[0], &s_bookmarks.records[1],
-            sizeof(BookmarkRecord) * (BOOKMARK_MAX_COUNT - 1));
-    destination = BOOKMARK_MAX_COUNT - 1;
-  } else if (destination == s_bookmarks.count) {
-    s_bookmarks.count += 1;
-  }
-  BookmarkRecord *record = &s_bookmarks.records[destination];
-  memcpy(record->book_id, s_remote_book_id, 16);
-  record->book_revision = s_remote_revision;
-  record->word_index = position;
-  record->total_word_count = s_remote_total_count;
-  record->kind = 0;
+  BookmarkRecord record = {
+    .book_revision = s_remote_revision,
+    .word_index = position,
+    .total_word_count = s_remote_total_count,
+    .created_at = (uint32_t)time(NULL),
+    .kind = 0,
+  };
+  memcpy(record.book_id, s_remote_book_id, 16);
+  insert_bookmark_newest(&record);
   persist_bookmarks();
   vibes_short_pulse();
   layer_mark_dirty(s_reader_layer);
@@ -4300,6 +4554,10 @@ static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
         break;
       case SETTING_REWIND:
         s_settings.behavior_flags ^= READER_BEHAVIOR_CURRENT_SENTENCE_FIRST;
+        break;
+      case SETTING_ATTENTION_GUARD:
+        set_attention_guard_enabled(
+            !behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD));
         break;
       case SETTING_SLEEP_MODES:
         s_settings_mode = false;
