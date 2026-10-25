@@ -44,7 +44,7 @@
 #define STATE_MAGIC 0x50525350UL
 #define STATE_VERSION 7
 #define SETTINGS_MAGIC 0x50525343UL
-#define SETTINGS_VERSION 9
+#define SETTINGS_VERSION 10
 #define PROGRESS_INTERVAL_SECONDS 15
 #define MAX_ACTIVE_INTERVAL_MS 60000UL
 #define CLOCK_WRAP_SECONDS (UINT32_MAX / 1000UL)
@@ -306,6 +306,7 @@ typedef struct PersistedSettings {
   uint8_t attention_grace_index;
   uint8_t attention_confirm_mode;
   uint8_t sleep_bookmark_timing;
+  uint8_t attention_bookmark_timing;
 } PersistedSettings;
 
 typedef struct PersistedSettingsV7 {
@@ -600,6 +601,7 @@ static PersistedSettings s_settings = {
   .attention_grace_index = 1,
   .attention_confirm_mode = ATTENTION_CONFIRM_ANY,
   .sleep_bookmark_timing = SLEEP_BOOKMARK_END,
+  .attention_bookmark_timing = SLEEP_BOOKMARK_START,
 };
 static uint16_t s_word_index;
 static uint8_t s_word_segment_index;
@@ -1570,15 +1572,20 @@ static void load_settings(void) {
   if (persist_exists(SETTINGS_KEY) &&
       persist_read_data(SETTINGS_KEY, &loaded, sizeof(loaded)) == (int)sizeof(loaded) &&
       loaded.magic == SETTINGS_MAGIC &&
-      (loaded.version == SETTINGS_VERSION || loaded.version == 8) &&
+      (loaded.version == SETTINGS_VERSION || loaded.version == 9 || loaded.version == 8) &&
       loaded.profile <= READER_PROFILE_CUSTOM && loaded.language <= APP_LANGUAGE_GERMAN &&
       loaded.library_sort < LIBRARY_SORT_COUNT && loaded.backlight_mode < BACKLIGHT_MODE_COUNT &&
       loaded.progress_display_mode < PROGRESS_DISPLAY_MODE_COUNT && loaded.sleep_mode < SLEEP_MODE_COUNT &&
       loaded.sleep_duration_index < 5 && loaded.attention_interval_index < 5 &&
       loaded.attention_grace_index < 4 &&
       loaded.attention_confirm_mode < ATTENTION_CONFIRM_COUNT &&
-      loaded.sleep_bookmark_timing <= SLEEP_BOOKMARK_END) {
+      loaded.sleep_bookmark_timing <= SLEEP_BOOKMARK_END &&
+      (loaded.version < SETTINGS_VERSION ||
+       loaded.attention_bookmark_timing <= SLEEP_BOOKMARK_END)) {
     s_settings = loaded;
+    if (loaded.version < SETTINGS_VERSION) {
+      s_settings.attention_bookmark_timing = SLEEP_BOOKMARK_START;
+    }
     if (loaded.version == 8) {
       s_settings.behavior_flags |= READER_BEHAVIOR_ATTENTION_GUARD;
     }
@@ -1607,6 +1614,7 @@ static void load_settings(void) {
       s_settings.attention_grace_index = previous.attention_grace_index;
       s_settings.attention_confirm_mode = previous.attention_confirm_mode;
       s_settings.sleep_bookmark_timing = previous.sleep_bookmark_timing;
+      s_settings.attention_bookmark_timing = SLEEP_BOOKMARK_START;
     }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV6)) {
@@ -2766,6 +2774,12 @@ static const char *attention_confirm_name(void) {
   }
 }
 
+static uint8_t *selected_bookmark_timing(void) {
+  return s_settings.sleep_mode == SLEEP_MODE_ATTENTION
+      ? &s_settings.attention_bookmark_timing
+      : &s_settings.sleep_bookmark_timing;
+}
+
 static void draw_sleep_settings(GContext *ctx, GRect bounds) {
   const char *labels[SLEEP_ROW_COUNT] = {
       localized("Mode", "Modus"),
@@ -2794,7 +2808,7 @@ static void draw_sleep_settings(GContext *ctx, GRect bounds) {
     if (row == SLEEP_ROW_GRACE) snprintf(value, sizeof(value), "%u s", attention_grace_seconds());
     if (row == SLEEP_ROW_CONFIRM) snprintf(value, sizeof(value), "%s", attention_confirm_name());
     if (row == SLEEP_ROW_BOOKMARK) snprintf(value, sizeof(value), "%s",
-        s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_START
+        *selected_bookmark_timing() == SLEEP_BOOKMARK_START
             ? localized("Start", "Anfang") : localized("End", "Ende"));
     graphics_context_set_text_color(ctx, GColorWhite);
     graphics_draw_text(ctx, labels[row], fonts_get_system_font(FONT_KEY_GOTHIC_14),
@@ -3396,7 +3410,7 @@ static void draw_sleep_status(GContext *ctx, GRect bounds) {
     if (!playback_requested() && !s_context_mode && s_attention_icon != NULL) {
       graphics_context_set_compositing_mode(ctx, GCompOpSet);
       graphics_draw_bitmap_in_rect(ctx, s_attention_icon,
-                                   GRect(bounds.size.w - 28, 4, 20, 20));
+                                   GRect(bounds.size.w - 22, 6, 16, 16));
     }
     return;
   }
@@ -3700,13 +3714,18 @@ static void sleep_tick_callback(void *context);
 
 static SleepMode active_monitor_mode(void) {
   if (s_attention_prompt) return s_attention_prompt_mode;
+  if (s_sleep_session_active) return (SleepMode)s_settings.sleep_mode;
   if (s_attention_guard_active) return SLEEP_MODE_ATTENTION;
-  return s_sleep_session_active ? (SleepMode)s_settings.sleep_mode : SLEEP_MODE_OFF;
+  if (s_remote_loaded && behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD)) {
+    return SLEEP_MODE_ATTENTION;
+  }
+  return SLEEP_MODE_OFF;
 }
 
 static bool monitor_active(void) {
   return s_attention_guard_active || s_sleep_session_active || s_attention_prompt ||
-         s_sleep_settling;
+         s_sleep_settling ||
+         (s_remote_loaded && behavior_enabled(READER_BEHAVIOR_ATTENTION_GUARD));
 }
 
 static bool monitor_needs_ticks(void) {
@@ -3854,9 +3873,12 @@ static void finish_sleep_session(void) {
   s_sleep_end_pending = false;
   s_attention_prompt = false;
   s_sleep_settling = false;
-  if (s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_END) {
-    store_sleep_bookmark(current_absolute_position());
-  }
+  const uint8_t bookmark_timing = finished_mode == SLEEP_MODE_ATTENTION
+      ? s_settings.attention_bookmark_timing
+      : s_settings.sleep_bookmark_timing;
+  store_sleep_bookmark(bookmark_timing == SLEEP_BOOKMARK_START
+                           ? s_sleep_phase_start_position
+                           : current_absolute_position());
   s_sleep_session_active = false;
   s_attention_guard_active = false;
   set_playing(false);
@@ -3931,9 +3953,6 @@ static void start_sleep_session(void) {
   const uint8_t phase_minutes = s_settings.sleep_mode == SLEEP_MODE_ATTENTION
       ? attention_interval_minutes() : sleep_duration_minutes();
   s_sleep_deadline = time(NULL) + (time_t)phase_minutes * 60;
-  if (s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_START) {
-    store_sleep_bookmark(s_sleep_phase_start_position);
-  }
   schedule_monitor_tick(1000);
 }
 
@@ -4022,9 +4041,6 @@ static void confirm_attention(AttentionConfirmMode source) {
   const uint8_t phase_minutes = s_attention_prompt_mode == SLEEP_MODE_TIMER
       ? 10 : attention_interval_minutes();
   s_sleep_deadline = time(NULL) + (time_t)phase_minutes * 60;
-  if (s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_START) {
-    store_sleep_bookmark(s_sleep_phase_start_position);
-  }
   schedule_monitor_tick(80);
   if (s_reader_layer != NULL) layer_mark_dirty(s_reader_layer);
 }
@@ -4502,7 +4518,7 @@ static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
             (s_settings.attention_confirm_mode + 1) % ATTENTION_CONFIRM_COUNT;
         break;
       case SLEEP_ROW_BOOKMARK:
-        s_settings.sleep_bookmark_timing = s_settings.sleep_bookmark_timing == SLEEP_BOOKMARK_START
+        *selected_bookmark_timing() = *selected_bookmark_timing() == SLEEP_BOOKMARK_START
             ? SLEEP_BOOKMARK_END : SLEEP_BOOKMARK_START;
         break;
       case SLEEP_ROW_START:
@@ -6126,7 +6142,7 @@ static void outbox_failed_callback(DictionaryIterator *iter, AppMessageResult re
 }
 
 static void init(void) {
-  s_attention_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MATERIAL_VISIBILITY);
+  s_attention_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MATERIAL_VERIFIED_USER);
   s_window_buffer = malloc(READER_WINDOW_BUFFER_BYTES);
   if (s_window_buffer == NULL) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "Unable to allocate transfer buffer");

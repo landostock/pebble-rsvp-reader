@@ -32,8 +32,9 @@ const elements = {
   apiStatus: document.querySelector("#api-status"),
   diagnosticsJson: document.querySelector("#diagnostics-json"),
   detailAuthors: document.querySelector("#detail-authors"),
+  detailBackdrop: document.querySelector("#detail-backdrop"),
+  detailClose: document.querySelector("#detail-close"),
   detailCover: document.querySelector("#detail-cover"),
-  detailEmpty: document.querySelector("#detail-empty"),
   detailForm: document.querySelector("#detail-form"),
   detailHeading: document.querySelector("#detail-heading"),
   detailLanguage: document.querySelector("#detail-language"),
@@ -176,6 +177,8 @@ const translations = {
     sourceLimit: "Default source limit",
     warningThreshold: "Warning threshold",
     backendDiagnostics: "Backend Diagnostics",
+    bookDetails: "Book details",
+    closeDetails: "Close book details",
     noBookSelected: "No book selected.",
     uploadCover: "Upload cover",
     extractCover: "Use EPUB cover",
@@ -318,6 +321,8 @@ const translations = {
     sourceLimit: "Standardlimit für Quellen",
     warningThreshold: "Warnschwelle",
     backendDiagnostics: "Backend-Diagnose",
+    bookDetails: "Buchdetails",
+    closeDetails: "Buchdetails schließen",
     noBookSelected: "Kein Buch ausgewählt.",
     uploadCover: "Cover hochladen",
     extractCover: "EPUB-Cover verwenden",
@@ -445,6 +450,9 @@ function applyTranslations() {
   });
   document.querySelector(".add-book-action")?.setAttribute("aria-label", t("addBook"));
   document.querySelector(".add-book-action")?.setAttribute("title", t("addBook"));
+  elements.detailBackdrop.setAttribute("aria-label", t("closeDetails"));
+  elements.detailClose.setAttribute("aria-label", t("closeDetails"));
+  elements.detailClose.setAttribute("title", t("closeDetails"));
   updateAuthButton();
   updateLoginMode();
   updateAuthSummary();
@@ -903,6 +911,17 @@ function selectBook(bookId) {
   state.selectedBookId = bookId;
   renderLibrary();
   renderSelectedBook();
+  elements.detailClose.focus();
+}
+
+function closeDetails({ restoreFocus = true } = {}) {
+  const previousBookId = state.selectedBookId;
+  state.selectedBookId = null;
+  renderLibrary();
+  renderSelectedBook();
+  if (restoreFocus && previousBookId) {
+    elements.library.querySelector(`[data-book-id="${CSS.escape(previousBookId)}"]`)?.focus();
+  }
 }
 
 function selectedBook() {
@@ -911,10 +930,9 @@ function selectedBook() {
 
 function renderSelectedBook() {
   const book = selectedBook();
-  elements.libraryLayout.classList.toggle("has-selection", Boolean(book));
+  document.body.classList.toggle("detail-open", Boolean(book));
+  elements.detailBackdrop.classList.toggle("hidden", !book);
   elements.detailPane.classList.toggle("hidden", !book);
-  elements.detailEmpty.classList.toggle("hidden", Boolean(book));
-  elements.detailForm.classList.toggle("hidden", !book);
   if (!book) {
     elements.progressSummary.textContent = t("selectBook");
     elements.detailProgressBar.style.width = "0%";
@@ -961,6 +979,9 @@ async function loadProgress(bookId) {
 }
 
 function switchView(view) {
+  if (view !== "library" && state.selectedBookId) {
+    closeDetails({ restoreFocus: false });
+  }
   state.view = view;
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}-view`));
@@ -1267,6 +1288,8 @@ elements.fileInput.addEventListener("change", () => {
   uploadFiles(elements.fileInput.files);
   elements.fileInput.value = "";
 });
+elements.detailClose.addEventListener("click", () => closeDetails());
+elements.detailBackdrop.addEventListener("click", () => closeDetails());
 elements.search.addEventListener("input", () => {
   renderLibrary();
   renderSearchResults();
@@ -1280,6 +1303,13 @@ elements.sort.addEventListener("change", () => {
 document.addEventListener("click", (event) => {
   if (!elements.searchResults.contains(event.target) && event.target !== elements.search) {
     elements.searchResults.classList.add("hidden");
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.selectedBookId && !document.querySelector("dialog[open]")) {
+    event.preventDefault();
+    closeDetails();
   }
 });
 

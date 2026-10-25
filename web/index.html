@@ -77,52 +77,74 @@
                 <span id="library-empty-body" data-i18n="emptyBody">Upload an EPUB to create the first reader package.</span>
               </div>
             </div>
+          </div>
 
-            <aside class="detail-pane hidden" id="detail-pane" aria-label="Book details">
-              <div class="detail-empty" id="detail-empty" data-i18n="noBookSelected">No book selected.</div>
-              <form class="detail-form hidden" id="detail-form">
-                <div class="detail-titlebar">
+          <button class="detail-backdrop hidden" id="detail-backdrop" type="button" aria-label="Close book details" tabindex="-1"></button>
+          <aside class="detail-pane hidden" id="detail-pane" role="dialog" aria-modal="true" aria-labelledby="detail-heading">
+            <form class="detail-form" id="detail-form">
+              <header class="detail-titlebar">
+                <div class="detail-titlecopy">
+                  <span class="detail-kicker" data-i18n="bookDetails">Book details</span>
                   <strong id="detail-heading">Book details</strong>
                   <span id="detail-subheading"></span>
                 </div>
-                <div class="detail-header">
+                <button class="icon-button detail-close" id="detail-close" type="button" aria-label="Close book details" title="Close book details">
+                  <span aria-hidden="true">×</span>
+                </button>
+              </header>
+
+              <div class="detail-scroll">
+                <section class="detail-overview">
                   <div class="cover-large" id="detail-cover"></div>
                   <div class="detail-actions">
-                    <button type="button" id="extract-cover" data-i18n="extractCover">Use EPUB cover</button>
                     <label class="cover-action">
                       <span data-i18n="uploadCover">Upload cover</span>
                       <input id="cover-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
                     </label>
-                    <button type="button" id="download-package" data-i18n="downloadPackage">Download reader package</button>
-                    <button class="danger-action" type="button" id="delete-book" data-i18n="deleteBook">Delete book</button>
+                    <button type="button" id="extract-cover" data-i18n="extractCover">Use EPUB cover</button>
                   </div>
-                </div>
-                <label>
-                  <span data-i18n="fieldTitle">Title</span>
-                  <input id="detail-title" name="title" autocomplete="off" />
-                </label>
-                <label>
-                  <span data-i18n="fieldAuthors">Authors</span>
-                  <input id="detail-authors" name="authors" autocomplete="off" />
-                </label>
-                <dl class="metrics compact">
-                  <div class="metric-language"><dt data-i18n="fieldLanguage">Language</dt><dd><input id="detail-language" name="language" autocomplete="off" /></dd></div>
-                  <div><dt data-i18n="tokens">Tokens</dt><dd id="detail-tokens">-</dd></div>
-                  <div><dt data-i18n="revision">Revision</dt><dd id="detail-revision">-</dd></div>
-                  <div><dt data-i18n="metadataRevision">Metadata</dt><dd id="detail-metadata-revision">-</dd></div>
-                </dl>
-                <div class="reading-progress">
+                </section>
+
+                <section class="detail-section">
+                  <h2 data-i18n="metadataRevision">Metadata</h2>
+                  <div class="detail-fields">
+                    <label>
+                      <span data-i18n="fieldTitle">Title</span>
+                      <input id="detail-title" name="title" autocomplete="off" />
+                    </label>
+                    <label>
+                      <span data-i18n="fieldAuthors">Authors</span>
+                      <input id="detail-authors" name="authors" autocomplete="off" />
+                    </label>
+                  </div>
+                  <dl class="metrics compact detail-metrics">
+                    <div class="metric-language"><dt data-i18n="fieldLanguage">Language</dt><dd><input id="detail-language" name="language" autocomplete="off" /></dd></div>
+                    <div><dt data-i18n="tokens">Tokens</dt><dd id="detail-tokens">-</dd></div>
+                    <div><dt data-i18n="revision">Revision</dt><dd id="detail-revision">-</dd></div>
+                    <div><dt data-i18n="metadataRevision">Metadata</dt><dd id="detail-metadata-revision">-</dd></div>
+                  </dl>
+                </section>
+
+                <section class="reading-progress detail-section">
                   <div class="reading-progress-heading">
                     <h2 data-i18n="readingProgress">Reading progress</h2>
                     <button class="quiet-danger-action" type="button" id="reset-progress" data-i18n="resetProgress">Mark as unread</button>
                   </div>
                   <div class="progress-summary" id="progress-summary"></div>
                   <div class="detail-progress" aria-hidden="true"><span id="detail-progress-bar"></span></div>
+                </section>
+
+                <div class="detail-secondary-actions">
+                  <button type="button" id="download-package" data-i18n="downloadPackage">Download reader package</button>
+                  <button class="danger-action" type="button" id="delete-book" data-i18n="deleteBook">Delete book</button>
                 </div>
+              </div>
+
+              <footer class="detail-footer">
                 <button class="primary-action" type="submit" data-i18n="saveMetadata">Save metadata</button>
-              </form>
-            </aside>
-          </div>
+              </footer>
+            </form>
+          </aside>
         </section>
 
         <section class="view" id="settings-view">
