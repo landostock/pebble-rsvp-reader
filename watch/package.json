@@ -1,7 +1,7 @@
 {
   "name": "pebble-rsvp-watch",
   "author": "Pebble RSVP contributors",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "private": true,
   "keywords": [
     "pebble-app"
@@ -22,13 +22,7 @@
       "Packet": 1
     },
     "resources": {
-      "media": [
-        {
-          "type": "bitmap",
-          "name": "IMAGE_MATERIAL_VERIFIED_USER",
-          "file": "images/material_verified_user_16.png"
-        }
-      ]
+      "media": []
     },
     "companionApp": {
       "android": {

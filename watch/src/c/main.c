@@ -44,7 +44,7 @@
 #define STATE_MAGIC 0x50525350UL
 #define STATE_VERSION 7
 #define SETTINGS_MAGIC 0x50525343UL
-#define SETTINGS_VERSION 10
+#define SETTINGS_VERSION 11
 #define PROGRESS_INTERVAL_SECONDS 15
 #define MAX_ACTIVE_INTERVAL_MS 60000UL
 #define CLOCK_WRAP_SECONDS (UINT32_MAX / 1000UL)
@@ -96,8 +96,8 @@ typedef enum OrpColor {
   ORP_COLOR_COUNT = 5,
 } OrpColor;
 
-#define ORP_COLOR_SHIFT 3
-#define ORP_COLOR_MASK (7 << ORP_COLOR_SHIFT)
+#define LEGACY_ORP_COLOR_SHIFT 3
+#define LEGACY_ORP_COLOR_MASK (7 << LEGACY_ORP_COLOR_SHIFT)
 
 typedef enum MenuDestination {
   MENU_CHAPTERS = 0,
@@ -307,7 +307,32 @@ typedef struct PersistedSettings {
   uint8_t attention_confirm_mode;
   uint8_t sleep_bookmark_timing;
   uint8_t attention_bookmark_timing;
+  uint8_t orp_color;
 } PersistedSettings;
+
+typedef struct PersistedSettingsV10 {
+  uint32_t magic;
+  uint8_t version;
+  uint8_t profile;
+  uint8_t custom_display_flags;
+  uint8_t behavior_flags;
+  uint8_t language;
+  uint8_t library_sort;
+  uint8_t backlight_mode;
+  uint8_t progress_display_mode;
+  uint8_t sleep_mode;
+  uint8_t sleep_duration_index;
+  uint8_t attention_interval_index;
+  uint8_t attention_grace_index;
+  uint8_t attention_confirm_mode;
+  uint8_t sleep_bookmark_timing;
+  uint8_t attention_bookmark_timing;
+} PersistedSettingsV10;
+
+_Static_assert(sizeof(PersistedSettings) == 20,
+               "Settings persistence layout changed unexpectedly");
+_Static_assert(sizeof(PersistedSettingsV10) == 20,
+               "Version 10 settings migration layout changed unexpectedly");
 
 typedef struct PersistedSettingsV7 {
   uint32_t magic;
@@ -426,7 +451,6 @@ _Static_assert(sizeof(PersistedBookmarkChunk) <= PERSIST_DATA_MAX_LENGTH,
 
 static Window *s_window;
 static Layer *s_reader_layer;
-static GBitmap *s_attention_icon;
 static AppTimer *s_timer;
 static AppTimer *s_feedback_timer;
 static AppTimer *s_transport_followup_timer;
@@ -602,6 +626,7 @@ static PersistedSettings s_settings = {
   .attention_confirm_mode = ATTENTION_CONFIRM_ANY,
   .sleep_bookmark_timing = SLEEP_BOOKMARK_END,
   .attention_bookmark_timing = SLEEP_BOOKMARK_START,
+  .orp_color = ORP_COLOR_YELLOW,
 };
 static uint16_t s_word_index;
 static uint8_t s_word_segment_index;
@@ -1177,7 +1202,7 @@ static bool custom_display_enabled(CustomDisplayFlag flag) {
 }
 
 static uint8_t orp_color_index(void) {
-  const uint8_t index = (s_settings.behavior_flags & ORP_COLOR_MASK) >> ORP_COLOR_SHIFT;
+  const uint8_t index = s_settings.orp_color;
   return index < ORP_COLOR_COUNT ? index : ORP_COLOR_RED;
 }
 
@@ -1197,9 +1222,7 @@ static const char *orp_color_name(void) {
 }
 
 static void cycle_orp_color(void) {
-  const uint8_t next = (uint8_t)((orp_color_index() + 1) % ORP_COLOR_COUNT);
-  s_settings.behavior_flags = (uint8_t)((s_settings.behavior_flags & ~ORP_COLOR_MASK) |
-                                        (next << ORP_COLOR_SHIFT));
+  s_settings.orp_color = (uint8_t)((orp_color_index() + 1) % ORP_COLOR_COUNT);
 }
 
 static GColor orp_focus_color(void) {
@@ -1567,12 +1590,27 @@ static void persist_settings(void) {
   persist_write_data(SETTINGS_KEY, &s_settings, sizeof(s_settings));
 }
 
+static uint8_t migrate_legacy_orp_color(uint8_t behavior_flags) {
+  const uint8_t packed =
+      (behavior_flags & LEGACY_ORP_COLOR_MASK) >> LEGACY_ORP_COLOR_SHIFT;
+  if (packed == ORP_COLOR_RED) return ORP_COLOR_RED;
+  if (packed == ORP_COLOR_GREEN || packed == (ORP_COLOR_GREEN | 1)) {
+    return ORP_COLOR_GREEN;
+  }
+  // Bit 3 was shared with attention mode, so white/cyan cannot be distinguished
+  // from the former default colors. Preserve the intended yellow default.
+  return ORP_COLOR_YELLOW;
+}
+
+static uint8_t migrate_legacy_behavior_flags(uint8_t behavior_flags) {
+  return behavior_flags & (uint8_t)~((1 << 4) | (1 << 5));
+}
+
 static void load_settings(void) {
   PersistedSettings loaded;
   if (persist_exists(SETTINGS_KEY) &&
       persist_read_data(SETTINGS_KEY, &loaded, sizeof(loaded)) == (int)sizeof(loaded) &&
-      loaded.magic == SETTINGS_MAGIC &&
-      (loaded.version == SETTINGS_VERSION || loaded.version == 9 || loaded.version == 8) &&
+      loaded.magic == SETTINGS_MAGIC && loaded.version == SETTINGS_VERSION &&
       loaded.profile <= READER_PROFILE_CUSTOM && loaded.language <= APP_LANGUAGE_GERMAN &&
       loaded.library_sort < LIBRARY_SORT_COUNT && loaded.backlight_mode < BACKLIGHT_MODE_COUNT &&
       loaded.progress_display_mode < PROGRESS_DISPLAY_MODE_COUNT && loaded.sleep_mode < SLEEP_MODE_COUNT &&
@@ -1580,14 +1618,41 @@ static void load_settings(void) {
       loaded.attention_grace_index < 4 &&
       loaded.attention_confirm_mode < ATTENTION_CONFIRM_COUNT &&
       loaded.sleep_bookmark_timing <= SLEEP_BOOKMARK_END &&
-      (loaded.version < SETTINGS_VERSION ||
-       loaded.attention_bookmark_timing <= SLEEP_BOOKMARK_END)) {
+      loaded.attention_bookmark_timing <= SLEEP_BOOKMARK_END &&
+      loaded.orp_color < ORP_COLOR_COUNT) {
     s_settings = loaded;
-    if (loaded.version < SETTINGS_VERSION) {
-      s_settings.attention_bookmark_timing = SLEEP_BOOKMARK_START;
-    }
-    if (loaded.version == 8) {
-      s_settings.behavior_flags |= READER_BEHAVIOR_ATTENTION_GUARD;
+  } else if (persist_exists(SETTINGS_KEY) &&
+             persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV10)) {
+    PersistedSettingsV10 previous;
+    if (persist_read_data(SETTINGS_KEY, &previous, sizeof(previous)) == (int)sizeof(previous) &&
+        previous.magic == SETTINGS_MAGIC && previous.version >= 8 && previous.version <= 10 &&
+        previous.profile <= READER_PROFILE_CUSTOM && previous.language <= APP_LANGUAGE_GERMAN &&
+        previous.library_sort < LIBRARY_SORT_COUNT && previous.backlight_mode < BACKLIGHT_MODE_COUNT &&
+        previous.progress_display_mode < PROGRESS_DISPLAY_MODE_COUNT &&
+        previous.sleep_mode < SLEEP_MODE_COUNT && previous.sleep_duration_index < 5 &&
+        previous.attention_interval_index < 5 && previous.attention_grace_index < 4 &&
+        previous.attention_confirm_mode < ATTENTION_CONFIRM_COUNT &&
+        previous.sleep_bookmark_timing <= SLEEP_BOOKMARK_END &&
+        (previous.version < 10 || previous.attention_bookmark_timing <= SLEEP_BOOKMARK_END)) {
+      s_settings.profile = previous.profile;
+      s_settings.custom_display_flags = previous.custom_display_flags;
+      s_settings.behavior_flags = migrate_legacy_behavior_flags(previous.behavior_flags);
+      if (previous.version == 8) {
+        s_settings.behavior_flags |= READER_BEHAVIOR_ATTENTION_GUARD;
+      }
+      s_settings.language = previous.language;
+      s_settings.library_sort = previous.library_sort;
+      s_settings.backlight_mode = previous.backlight_mode;
+      s_settings.progress_display_mode = previous.progress_display_mode;
+      s_settings.sleep_mode = previous.sleep_mode;
+      s_settings.sleep_duration_index = previous.sleep_duration_index;
+      s_settings.attention_interval_index = previous.attention_interval_index;
+      s_settings.attention_grace_index = previous.attention_grace_index;
+      s_settings.attention_confirm_mode = previous.attention_confirm_mode;
+      s_settings.sleep_bookmark_timing = previous.sleep_bookmark_timing;
+      s_settings.attention_bookmark_timing = previous.version < 10
+          ? SLEEP_BOOKMARK_START : previous.attention_bookmark_timing;
+      s_settings.orp_color = migrate_legacy_orp_color(previous.behavior_flags);
     }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV7)) {
@@ -1615,6 +1680,7 @@ static void load_settings(void) {
       s_settings.attention_confirm_mode = previous.attention_confirm_mode;
       s_settings.sleep_bookmark_timing = previous.sleep_bookmark_timing;
       s_settings.attention_bookmark_timing = SLEEP_BOOKMARK_START;
+      s_settings.orp_color = ORP_COLOR_YELLOW;
     }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV6)) {
@@ -1632,6 +1698,7 @@ static void load_settings(void) {
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = previous.backlight_mode;
       s_settings.progress_display_mode = previous.progress_display_mode;
+      s_settings.orp_color = ORP_COLOR_YELLOW;
     }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV3)) {
@@ -1647,6 +1714,7 @@ static void load_settings(void) {
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = previous.backlight_mode;
       s_settings.progress_display_mode = PROGRESS_DISPLAY_PERCENT;
+      s_settings.orp_color = ORP_COLOR_YELLOW;
     }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV2)) {
@@ -1661,6 +1729,7 @@ static void load_settings(void) {
       s_settings.language = previous.language;
       s_settings.library_sort = previous.library_sort;
       s_settings.backlight_mode = BACKLIGHT_SMART;
+      s_settings.orp_color = ORP_COLOR_YELLOW;
     }
   } else if (persist_exists(SETTINGS_KEY) &&
              persist_get_size(SETTINGS_KEY) == (int)sizeof(PersistedSettingsV1)) {
@@ -1671,6 +1740,7 @@ static void load_settings(void) {
       s_settings.profile = previous.profile;
       s_settings.custom_display_flags = previous.custom_display_flags;
       s_settings.behavior_flags = previous.behavior_flags | READER_BEHAVIOR_ATTENTION_GUARD;
+      s_settings.orp_color = ORP_COLOR_YELLOW;
     }
   }
   s_language = (AppLanguage)s_settings.language;
@@ -3402,16 +3472,31 @@ static void draw_corner_loading(GContext *ctx, GRect bounds) {
   draw_spinner(ctx, center);
 }
 
+static bool attention_status_visible(void) {
+  return monitor_active() && !s_attention_prompt && !s_sleep_settling &&
+      active_monitor_mode() == SLEEP_MODE_ATTENTION && !playback_requested() &&
+      !s_context_mode;
+}
+
+static void draw_attention_shield(GContext *ctx, GRect bounds) {
+  const int16_t right = bounds.size.w - (current_position_is_bookmarked() ? 32 : 8);
+  const GPoint points[] = {
+      GPoint(right - 6, 7), GPoint(right - 1, 5), GPoint(right + 4, 7),
+      GPoint(right + 4, 12), GPoint(right + 3, 16), GPoint(right - 1, 19),
+      GPoint(right - 5, 16), GPoint(right - 6, 12), GPoint(right - 6, 7),
+  };
+  graphics_context_set_stroke_color(ctx, GColorLightGray);
+  for (uint8_t index = 1; index < ARRAY_LENGTH(points); index += 1) {
+    graphics_draw_line(ctx, points[index - 1], points[index]);
+  }
+}
+
 static void draw_sleep_status(GContext *ctx, GRect bounds) {
   if (!monitor_active()) return;
   const SleepMode active_mode = active_monitor_mode();
   if (!s_attention_prompt && !s_sleep_settling &&
       active_mode == SLEEP_MODE_ATTENTION) {
-    if (!playback_requested() && !s_context_mode && s_attention_icon != NULL) {
-      graphics_context_set_compositing_mode(ctx, GCompOpSet);
-      graphics_draw_bitmap_in_rect(ctx, s_attention_icon,
-                                   GRect(bounds.size.w - 22, 6, 16, 16));
-    }
+    if (attention_status_visible()) draw_attention_shield(ctx, bounds);
     return;
   }
   if (playback_requested() && !s_attention_prompt && !s_sleep_settling) return;
@@ -3669,7 +3754,7 @@ static void reader_update_proc(Layer *layer, GContext *ctx) {
       if (active_monitor_mode() == SLEEP_MODE_TIMER) {
         right_inset = 76;
       } else if (active_monitor_mode() == SLEEP_MODE_ATTENTION && !s_context_mode) {
-        right_inset = 36;
+        right_inset = has_bookmarks ? 58 : 36;
       }
     }
     graphics_context_set_text_color(ctx, GColorLightGray);
@@ -6142,7 +6227,6 @@ static void outbox_failed_callback(DictionaryIterator *iter, AppMessageResult re
 }
 
 static void init(void) {
-  s_attention_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MATERIAL_VERIFIED_USER);
   s_window_buffer = malloc(READER_WINDOW_BUFFER_BYTES);
   if (s_window_buffer == NULL) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "Unable to allocate transfer buffer");
@@ -6212,10 +6296,6 @@ static void deinit(void) {
   persist_bookmarks();
   light_enable(false);
   window_destroy(s_window);
-  if (s_attention_icon != NULL) {
-    gbitmap_destroy(s_attention_icon);
-    s_attention_icon = NULL;
-  }
   free(s_window_buffer);
   s_window_buffer = NULL;
   free(s_previous_cache);
